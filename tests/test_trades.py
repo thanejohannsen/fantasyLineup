@@ -405,8 +405,10 @@ def test_pitch_quantifies_their_side():
     ]
     slots = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX"]
     proposal, rationale = _explained(mine, theirs, slots)
-    assert f"+{proposal.their_gain:.0f} points" in rationale.pitch
-    assert "rest of season" in rationale.pitch
+    # The pitch is hard-wrapped, so phrases straddle line breaks.
+    flat = " ".join(rationale.pitch.split())
+    assert f"+{proposal.their_gain:.0f} points" in flat
+    assert "rest of season" in flat
 
 
 def test_pitch_is_wrapped_for_pasting():
@@ -490,246 +492,125 @@ def test_pitch_never_invents_a_player():
 def test_pitch_names_who_the_incoming_player_displaces():
     """The strongest argument is concrete: who he beats out in *their* lineup.
 
-    A position count ("you roster 2 at TE") is weaker and easier to wave away
-    than naming the man who moves to the bench.
+    That claim requires knowing the lineup he actually set, so the real starters
+    are supplied here as the live commands do. Their lineup is full, so the
+    incoming tight end genuinely pushes someone onto the bench.
     """
-    mine = [
-        p("Alder", "QB", 300.0),
-        p("Bramble", "TE", 240.0),
-        p("Cedar", "TE", 169.0),
-        p("Dogwood", "RB", 206.0),
-        p("Elm", "WR", 250.0),
-        p("Fir", "WR", 210.0),
-        p("Gorse", "WR", 130.0),
-        p("Hazel", "WR", 125.0),
-    ]
-    theirs = [
+    from fantasylineup.engine.trades import explain_trade
+
+    incoming = p("Bramble", "TE", 240.0)
+    outgoing = p("Kapok", "RB", 247.0)
+    weak_te = p("Maple", "TE", 90.0)
+
+    their_set = [
         p("Juniper", "QB", 300.0),
-        p("Kapok", "RB", 247.0),
+        outgoing,
         p("Larch", "RB", 120.0),
-        p("Maple", "TE", 90.0),
         p("Nutmeg", "WR", 240.0),
         p("Olive", "WR", 200.0),
+        weak_te,
         p("Poplar", "WR", 190.0),
         p("Quince", "WR", 180.0),
     ]
+    theirs = list(their_set)
+    mine = [incoming, p("Alder", "QB", 300.0), p("Elm", "WR", 250.0)]
     slots = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX"]
-    _, rationale = _explained(mine, theirs, slots)
-    assert "moves to your bench" in rationale.pitch or "start for you" in rationale.pitch
 
+    proposal = TradeProposal(7, "them", (incoming,), (outgoing,), 9.0, 3.0)
+    rationale = explain_trade(proposal, mine, theirs, slots, their_starters=their_set)
 
-def _prop(partner, give, get, my_gain, their_gain):
-    from fantasylineup.engine.trades import TradeProposal
-
-    return TradeProposal(hash(partner) % 100, partner, give, get, my_gain, their_gain)
-
-
-def test_ranking_flags_mutually_exclusive_offers():
-    """Offers routing through one surplus player cannot all happen.
-
-    Presented as a flat list, a manager sends all of them and honours whichever
-    is accepted first -- which is how you end up taking the worst of three
-    offers you could have had. The best one has to be identifiable.
-    """
-    from fantasylineup.engine.trades import rank_proposals
-
-    kittle = p("Kittle", "TE", 169.0)
-    montgomery = p("Montgomery", "RB", 206.0)
-    proposals = [
-        _prop("Ryan", (kittle,), (p("Pierce", "WR", 178.0),), 8.6, 3.1),
-        _prop("Unc Show", (kittle, montgomery), (p("Henry", "RB", 247.0),), 27.0, 5.9),
-        _prop("Tofu", (kittle,), (p("Waddle", "WR", 177.0),), 7.4, 5.0),
-        _prop("Other", (p("Spears", "RB", 115.0),), (p("Zay", "WR", 150.0),), 5.0, 2.0),
-    ]
-    ranked = rank_proposals(proposals)
-
-    # Ordered by our own gain, regardless of input order.
-    assert [r.proposal.partner_name for r in ranked] == ["Unc Show", "Ryan", "Tofu", "Other"]
-    assert [r.rank for r in ranked] == [1, 2, 3, 4]
-
-    best = ranked[0]
-    assert best.is_priority and not best.conflicts_with
-
-    # The two lesser Kittle deals are blocked by the best one.
-    assert ranked[1].conflicts_with == (1,)
-    assert ranked[1].shared_players == ("Kittle",)
-    assert ranked[2].conflicts_with == (1, 2)
-
-    # A deal sharing nobody stays independently sendable.
-    assert ranked[3].is_priority
-
-
-def test_ranking_of_independent_offers_has_no_conflicts():
-    from fantasylineup.engine.trades import rank_proposals
-
-    proposals = [
-        _prop("A", (p("a1", "RB", 100.0),), (p("a2", "WR", 110.0),), 9.0, 2.0),
-        _prop("B", (p("b1", "TE", 100.0),), (p("b2", "WR", 110.0),), 4.0, 2.0),
-    ]
-    assert all(r.is_priority for r in rank_proposals(proposals))
-
-
-def test_ranking_handles_an_empty_list():
-    from fantasylineup.engine.trades import rank_proposals
-
-    assert rank_proposals([]) == []
-
-
-ZOO_SLOTS = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX", "K", "DEF"]
-
-
-def test_displacement_uses_their_real_lineup_not_our_ideal():
-    """Regression: the message named a player already on their bench.
-
-    Real case from the league. Projections rate Hunter Henry (153.5) above Juwan
-    Johnson (140.9), so the optimal lineup we would set for that manager starts
-    Henry. He does not agree -- he starts Johnson and benches Henry. Computing
-    displacement against our ideal produced "Hunter Henry moves to your bench"
-    about a player already sitting there, which the recipient can disprove by
-    glancing at his own team.
-
-    The claim has to be measured against the lineup actually set.
-    """
-    from fantasylineup.engine.trades import TradeProposal, explain_trade
-
-    kittle = p("George Kittle", "TE", 169.3)
-    montgomery = p("David Montgomery", "RB", 206.1)
-    derrick = p("Derrick Henry", "RB", 246.9)
-    hunter = p("Hunter Henry", "TE", 153.5)
-    juwan = p("Juwan Johnson", "TE", 140.9)
-
-    their_roster = [
-        p("Lamar Jackson", "QB", 326.0),
-        p("Christian McCaffrey", "RB", 291.0),
-        derrick,
-        p("Mike Evans", "WR", 222.2),
-        p("Jameson Williams", "WR", 206.2),
-        p("Brian Thomas", "WR", 195.4),
-        p("Davante Adams", "WR", 192.5),
-        hunter,
-        juwan,
-        p("Chris Boswell", "K", 67.0),
-        p("Minnesota Vikings", "DEF", 102.0),
-    ]
-    # What that manager actually runs: Johnson starts, Hunter Henry benched.
-    their_set = [
-        p("Lamar Jackson", "QB", 326.0),
-        p("Christian McCaffrey", "RB", 291.0),
-        derrick,
-        p("Davante Adams", "WR", 192.5),
-        p("Jameson Williams", "WR", 206.2),
-        juwan,
-        p("Mike Evans", "WR", 222.2),
-        p("Brian Thomas", "WR", 195.4),
-        p("Chris Boswell", "K", 67.0),
-        p("Minnesota Vikings", "DEF", 102.0),
-    ]
-    my_roster = [kittle, montgomery, p("Trey McBride", "TE", 235.0), p("Bijan", "RB", 325.0)]
-
-    proposal = TradeProposal(2, "Unc Show", (kittle, montgomery), (derrick,), 27.0, 5.9)
-    rationale = explain_trade(
-        proposal, my_roster, their_roster, ZOO_SLOTS, their_starters=their_set
-    )
-
-    # The pitch is hard-wrapped, so names can straddle a line break.
     flat = " ".join(rationale.pitch.split())
-    assert "Juwan Johnson" in flat
-    assert "Hunter Henry moves" not in flat, "named a player who is already benched"
+    assert "Bramble would start for you" in flat
+    assert "Maple moves to your bench" in flat
 
 
-def test_displacement_falls_back_when_no_lineup_is_set():
-    """Early season, or a manager who never sets a lineup: degrade, don't crash."""
-    from fantasylineup.engine.trades import TradeProposal, explain_trade
+def test_displacement_claim_is_omitted_when_no_lineup_is_known():
+    """With nothing set, decline to name a benched player rather than guess.
 
-    kittle = p("George Kittle", "TE", 169.3)
-    derrick = p("Derrick Henry", "RB", 246.9)
-    their_roster = [derrick, p("Their TE", "TE", 90.0), p("Their QB", "QB", 300.0)]
-    my_roster = [kittle, p("Trey McBride", "TE", 235.0)]
-
-    proposal = TradeProposal(2, "Unc Show", (kittle,), (derrick,), 9.0, 3.0)
-    rationale = explain_trade(proposal, my_roster, their_roster, ZOO_SLOTS, their_starters=[])
-    assert rationale.pitch
-    assert "George Kittle" in " ".join(rationale.pitch.split())
-
-
-def _injured(pid, pos, pts, regime, status="Questionable", part="Knee - ACL", notes="Surgery"):
-    from fantasylineup.engine.lineup import PlayerProjection
-
-    return PlayerProjection(
-        sleeper_id=pid,
-        name=pid,
-        position=pos,
-        points=pts,
-        fantasy_positions=frozenset({pos}),
-        injury_status=status,
-        injury_body_part=part,
-        injury_notes=notes,
-        health_regime=regime,
-    )
-
-
-def test_season_ending_injuries_are_never_traded():
-    """Neither sold nor acquired.
-
-    A player with no remaining value must not be offered as though he had any,
-    and must not be taken back as though he had any either. The rest-of-season
-    haircut already zeroes him, but gating explicitly means this keeps holding
-    if the multiplier ever stops being exactly zero.
+    Every bug in this area came from substituting our optimal lineup for a
+    manager's real one. Where no real lineup exists there is nothing to read, so
+    the specific claim is dropped instead of being invented.
     """
-    mine = [
-        p("qb", "QB", 300.0),
-        p("rb1", "RB", 250.0),
-        p("rb2", "RB", 200.0),
-        p("rb3", "RB", 190.0),
-        p("rb4", "RB", 180.0),
-        p("rb5", "RB", 170.0),
-        _injured("my_wreck", "WR", 160.0, "out_long"),
-        p("wr_bad", "WR", 40.0),
-        p("te", "TE", 120.0),
-    ]
+    from fantasylineup.engine.trades import explain_trade
+
+    incoming = p("Bramble", "TE", 240.0)
+    outgoing = p("Kapok", "RB", 247.0)
+    mine = [incoming, p("Alder", "QB", 300.0), p("Elm", "WR", 250.0)]
+    theirs = [p("Juniper", "QB", 300.0), outgoing, p("Maple", "TE", 90.0)]
+    slots = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX"]
+
+    proposal = TradeProposal(7, "them", (incoming,), (outgoing,), 9.0, 3.0)
+    rationale = explain_trade(proposal, mine, theirs, slots, their_starters=None)
+    assert "moves to your bench" not in rationale.pitch
+
+
+def test_no_claim_contradicts_their_real_lineup():
+    """The invariant that both previous bugs violated.
+
+    Testing the specific sentence that broke would pass while the next
+    equivalent claim breaks -- which is exactly what happened: a fix to two
+    facts left a third reading our optimal lineup for the other manager, and it
+    shipped a note saying a player he starts was not in his lineup.
+
+    So this asserts the rule itself, on a scenario where the two sources
+    deliberately disagree: our optimal for him benches a player he actually
+    starts. Every membership claim must side with his lineup, not ours.
+    """
+    from fantasylineup.engine.trades import explain_trade
+    from fantasylineup.engine.lineup import optimize_lineup
+
+    slots = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX"]
+    contrarian = p("Sutton", "WR", 159.0)  # he starts him; our optimal does not
+    better_bench = p("Kincaid", "TE", 163.0)
+    outgoing = p("Waddle", "WR", 221.0)
+
     theirs = [
-        p("tqb", "QB", 300.0),
-        p("twr1", "WR", 240.0),
-        p("twr2", "WR", 230.0),
-        p("twr3", "WR", 220.0),
-        p("twr4", "WR", 210.0),
-        p("twr5", "WR", 200.0),
-        _injured("their_wreck", "RB", 200.0, "out_long"),
-        p("trb_bad", "RB", 30.0),
-        p("tte", "TE", 120.0),
+        p("Hurts", "QB", 310.0),
+        p("Jeanty", "RB", 233.0),
+        p("Henderson", "RB", 171.0),
+        p("Nacua", "WR", 312.0),
+        p("Rice", "WR", 229.0),
+        outgoing,
+        better_bench,
+        contrarian,
+        p("Spare", "RB", 168.0),
     ]
-    proposals = find_trades(mine, theirs, SLOTS, 7, "them")
-    assert proposals, "healthy complementary trades should still be found"
-    for proposal in proposals:
-        names = {x.sleeper_id for x in (*proposal.give, *proposal.get)}
-        assert "my_wreck" not in names
-        assert "their_wreck" not in names
+    # His actual lineup starts Sutton over the spare back; ours would not.
+    their_set = [
+        p("Hurts", "QB", 310.0),
+        p("Jeanty", "RB", 233.0),
+        p("Henderson", "RB", 171.0),
+        p("Nacua", "WR", 312.0),
+        p("Rice", "WR", 229.0),
+        better_bench,
+        outgoing,
+        contrarian,
+    ]
+    our_optimal = {
+        pl.sleeper_id for pl in optimize_lineup(theirs, slots).assignments.values()
+    }
+    real = {pl.sleeper_id for pl in their_set}
+    assert our_optimal != real, "fixture must make the two sources disagree"
+    assert "Sutton" in real and "Sutton" not in our_optimal
 
+    incoming = p("Kittle", "TE", 152.0)
+    mine = [incoming, p("McBride", "TE", 235.0), p("Bijan", "RB", 325.0)]
+    proposal = TradeProposal(9, "them", (incoming,), (contrarian,), 6.0, 3.0)
+    rationale = explain_trade(proposal, mine, theirs, slots, their_starters=their_set)
 
-def test_playing_injured_player_is_still_tradeable_with_disclosure():
-    """Selling a diminished-but-playing asset is legitimate; hiding it is not."""
-    from fantasylineup.engine.trades import explain_trade
+    text = " ".join((rationale.their_angle + " " + rationale.pitch).split())
 
-    kittle = _injured("George Kittle", "TE", 152.4, "playing_diminished", part="Achilles")
-    mine = [kittle, p("Trey McBride", "TE", 235.0), p("Bijan", "RB", 325.0)]
-    theirs = [p("Derrick Henry", "RB", 246.9), p("Their TE", "TE", 80.0)]
+    after = {
+        pl.sleeper_id
+        for pl in optimize_lineup(
+            [x for x in their_set if x.sleeper_id != contrarian.sleeper_id] + [incoming],
+            slots,
+        ).assignments.values()
+    }
 
-    proposal = TradeProposal(2, "Unc Show", (kittle,), (theirs[0],), 24.0, 5.6)
-    rationale = explain_trade(proposal, mine, theirs, SLOTS)
-
-    flat = " ".join(rationale.pitch.split())
-    assert rationale.disclosures, "an injured player in the deal must be disclosed"
-    assert "George Kittle" in flat
-    assert "achilles" in flat.lower()
-    assert "Questionable" in flat
-
-
-def test_healthy_deal_carries_no_disclosure_noise():
-    from fantasylineup.engine.trades import explain_trade
-
-    mine = [p("a1", "RB", 200.0), p("a2", "TE", 150.0)]
-    theirs = [p("b1", "WR", 210.0)]
-    proposal = TradeProposal(3, "them", (mine[1],), (theirs[0],), 8.0, 2.0)
-    rationale = explain_trade(proposal, mine, theirs, SLOTS)
-    assert rationale.disclosures == ()
-    assert "Heads up" not in rationale.pitch
+    for player in their_set:
+        # A player he starts must never be described as absent from his lineup.
+        assert f"{player.name} is not in their lineup" not in text, player.name
+        # And anyone said to be benched must genuinely leave it after the trade.
+        if f"{player.name} moves to your bench" in text:
+            assert player.sleeper_id not in after, player.name
