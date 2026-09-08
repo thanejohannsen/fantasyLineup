@@ -202,6 +202,16 @@ evidence there would suppress exactly the trades worth making first.
 Thresholds live in `config.toml` under `[trades]`, `require_stable` included --
 they are policy, not physics.
 
+The draws are seeded, and seeding here is subtler than it looks. Fixing the
+generator fixes the *sequence* of draws but not which player each one lands on,
+and that mapping originally came from iterating a set of string ids -- an order
+CPython salts per process. Identical inputs gave a p90 four points apart across
+five runs, so the hourly dashboard quoted a different range every hour from
+unchanged data. The ids are sorted now, and the test that guards it compares
+separate processes under different `PYTHONHASHSEED` values, because the earlier
+one compared two calls inside a single process and passed while the property it
+named was false.
+
 ## Does it notice completed trades?
 
 Yes, and not because it watches for them. Availability and every roster figure
@@ -237,7 +247,7 @@ generates would be breaking new ground, which is also why the pitch text matters
 ## Development
 
 ```bash
-.venv/bin/python -m pytest        # 118 tests, no network required
+.venv/bin/python -m pytest        # 122 tests, no network required
 ```
 
 Tests run against captured real API responses in `fixtures/`, so they fail if an

@@ -188,7 +188,13 @@ def measure_stability(
     flickers between refreshes is worse than advice that is merely uncertain.
     """
     rng = np.random.default_rng(seed)
-    involved = {p.sleeper_id for p in (*my_roster, *proposal.give, *proposal.get)}
+    # Sorted, not a set. Seeding the generator fixes the *sequence* of draws;
+    # it does not fix which player each draw lands on. Iterating a set of string
+    # ids does that, and CPython salts string hashes per process, so the same
+    # inputs gave a different range on every run -- p90 moved by four points
+    # across five processes. The seed looked like it was working because a test
+    # compared two calls inside one process, where set order is stable.
+    involved = sorted({p.sleeper_id for p in (*my_roster, *proposal.give, *proposal.get)})
 
     gains = np.empty(draws)
     for i in range(draws):

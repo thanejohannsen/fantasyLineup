@@ -13,7 +13,7 @@ from __future__ import annotations
 import html
 from datetime import UTC, datetime
 
-from ..engine.locks import LockState, format_countdown
+from ..engine.locks import LockState
 from .advisory import Advisory
 
 _UNKNOWN = LockState(locked=False, kickoff_utc=None)
@@ -173,14 +173,17 @@ def render_dashboard(advisory: Advisory, team_name: str, moves_html: str = "") -
             )
             continue
         state = a.lock_states.get(player.sleeper_id, _UNKNOWN)
+        # Absolute, not a countdown. The browser rewrites every [data-kickoff]
+        # element on load, so a server-rendered "5d 1h" is replaced before it is
+        # ever read -- but it changes on every hourly run, which made the page
+        # differ from the last commit every hour and defeated the guard meant to
+        # keep the history to real changes. An absolute time is also the more
+        # honest fallback: a cached page showing "5d 1h" is wrong, while one
+        # showing the kickoff itself stays true however stale it gets.
         when = (
             "locked"
             if state.locked
-            else (
-                "bye"
-                if state.kickoff_utc is None
-                else format_countdown(state.kickoff_utc, a.generated_at)
-            )
+            else ("bye" if state.kickoff_utc is None else f"{state.kickoff_utc:%a %H:%M}")
         )
         cls = ' class="locked"' if state.locked else ""
         opp = f"vs {_esc(player.opponent)}" if player.opponent else ""
@@ -241,12 +244,14 @@ def render_dashboard(advisory: Advisory, team_name: str, moves_html: str = "") -
     deadline = ""
     deadline_attr = ""
     if a.deadline is not None:
-        deadline = (
-            f"Next lock in {format_countdown(a.deadline, a.generated_at)} "
-            f"({a.deadline:%a %H:%M UTC})"
-        )
+        # "Next lock" sits outside the span: the browser overwrites the whole
+        # textContent of a [data-kickoff] element, so a prefix placed inside it
+        # was being wiped the moment the script ran.
         deadline_attr = f' data-kickoff="{a.deadline.isoformat()}"'
-        deadline = f'<span class="when"{deadline_attr}>{_esc(deadline)}</span>'
+        deadline = (
+            "Next lock "
+            f'<span class="when"{deadline_attr}>{_esc(f"{a.deadline:%a %H:%M UTC}")}</span>'
+        )
     
 
     # A complete document: GitHub Pages serves the file verbatim, with no

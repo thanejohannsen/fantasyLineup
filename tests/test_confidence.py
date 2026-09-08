@@ -9,6 +9,9 @@ assignment and jump the result.
 
 from __future__ import annotations
 
+import os
+import sys
+
 import pytest
 
 from fantasylineup.engine.confidence import (
@@ -165,6 +168,47 @@ def test_stability_is_deterministic():
     first = measure_stability(proposal, roster, SLOTS, draws=120)
     second = measure_stability(proposal, roster, SLOTS, draws=120)
     assert first == second
+
+
+# The in-process check above passed while the property it names was false. Seeding
+# the generator fixes the sequence of draws, not which player each draw lands on,
+# and that mapping came from iterating a set of string ids -- an order CPython
+# salts per process. Identical inputs produced a p90 four points apart across five
+# runs, so the hourly dashboard quoted a different range every hour from unchanged
+# data. Determinism that only holds inside one process is not determinism: the
+# refreshes being compared are separate processes.
+_DETERMINISM_PROBE = """
+import sys
+sys.path.insert(0, {root!r})
+from fantasylineup.engine.confidence import measure_stability
+from fantasylineup.engine.trades import TradeProposal
+from tests.test_confidence import SLOTS, _roster, _two_for_one
+
+roster = _roster()
+print("%.6f %.6f" % measure_stability(_two_for_one(roster), roster, SLOTS, draws=120))
+"""
+
+
+def test_stability_is_deterministic_across_processes():
+    import pathlib
+    import subprocess
+
+    root = str(pathlib.Path(__file__).resolve().parent.parent)
+    script = _DETERMINISM_PROBE.format(root=root)
+
+    results = set()
+    for hash_seed in ("0", "1", "12345"):
+        env = {**os.environ, "PYTHONHASHSEED": hash_seed}
+        out = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=True,
+        )
+        results.add(out.stdout.strip())
+
+    assert len(results) == 1, f"range moved between processes: {results}"
 
 
 def test_percentiles_are_ordered_and_bracket_nothing_absurd():
