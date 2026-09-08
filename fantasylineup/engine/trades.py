@@ -34,7 +34,7 @@ import textwrap
 from dataclasses import dataclass
 from itertools import combinations
 
-from .lineup import PlayerProjection, lineup_value
+from .lineup import PlayerProjection, lineup_value, optimize_lineup
 
 
 @dataclass(frozen=True)
@@ -225,8 +225,6 @@ def _profile(roster: list[PlayerProjection], slots: list[str]) -> tuple[dict, se
 
 
 def lineup_optimal(roster: list[PlayerProjection], slots: list[str]):
-    from .lineup import optimize_lineup
-
     return optimize_lineup(roster, slots)
 
 
@@ -236,13 +234,46 @@ def _names(players: tuple[PlayerProjection, ...]) -> str:
     return " and ".join([", ".join(p.name for p in players[:-1]), players[-1].name])
 
 
+def _displaced_from_lineup(
+    current_starters: list[PlayerProjection],
+    leaving: tuple[PlayerProjection, ...],
+    arriving: tuple[PlayerProjection, ...],
+    slots: list[str],
+) -> list[PlayerProjection]:
+    """Who drops out of a lineup that is *actually set*, not an idealised one.
+
+    This must be measured against the lineup the other manager really runs.
+    Measuring against our own optimal-for-them produces claims they can falsify
+    instantly: in one live case the projections rated their benched tight end
+    above their starter, so the message announced that a player already on their
+    bench would be moving to their bench. One sentence like that discredits the
+    whole offer.
+    """
+    if not current_starters:
+        return []
+    outgoing = {p.sleeper_id for p in leaving}
+    pool = [p for p in current_starters if p.sleeper_id not in outgoing] + list(arriving)
+    kept = {p.sleeper_id for p in optimize_lineup(pool, slots).assignments.values()}
+    return [
+        p for p in current_starters if p.sleeper_id not in kept and p.sleeper_id not in outgoing
+    ]
+
+
 def explain_trade(
     proposal: TradeProposal,
     my_roster: list[PlayerProjection],
     their_roster: list[PlayerProjection],
     slots: list[str],
+    my_starters: list[PlayerProjection] | None = None,
+    their_starters: list[PlayerProjection] | None = None,
 ) -> TradeRationale:
-    """Build the rationale and a sendable message for one proposal."""
+    """Build the rationale and a sendable message for one proposal.
+
+    ``my_starters`` and ``their_starters`` are the lineups as actually set in
+    the app. When supplied, every claim about who starts and who gets benched is
+    made against those rather than against a computed ideal, so the other
+    manager can verify each one against what he is looking at.
+    """
     my_before_counts, my_before_starters = _profile(my_roster, slots)
     their_before_counts, their_before_starters = _profile(their_roster, slots)
 
@@ -253,29 +284,46 @@ def explain_trade(
 
     # The crispest possible argument: I am sending players who do not start for
     # me and receiving one who does.
-    sending_benched = [p for p in proposal.give if p.sleeper_id not in my_before_starters]
+    # Judged against my real lineup where known, for the same reason.
+    my_lineup = {p.sleeper_id for p in my_starters} if my_starters else my_before_starters
+    sending_benched = [p for p in proposal.give if p.sleeper_id not in my_lineup]
     receiving_starter = [p for p in proposal.get if p.sleeper_id in my_after_starters]
     they_start_incoming = [p for p in proposal.give if p.sleeper_id in their_after_starters]
     their_benched_out = [p for p in proposal.get if p.sleeper_id not in their_before_starters]
 
     # Who the incoming player pushes out of *their* lineup. Naming him is the
-    # most checkable form of the argument, and the one they would make anyway.
-    outgoing_ids = {p.sleeper_id for p in proposal.get}
-    displaced = [
-        player
-        for player in lineup_optimal(their_roster, slots).assignments.values()
-        if player.sleeper_id not in their_after_starters
-        and player.sleeper_id not in outgoing_ids
-    ]
+    # most checkable form of the argument -- which is exactly why it has to be
+    # measured against the lineup they actually set.
+    if their_starters:
+        displaced = _displaced_from_lineup(
+            their_starters, proposal.get, proposal.give, slots
+        )
+        # Against their real lineup, does the incoming player actually start?
+        leaving = {g.sleeper_id for g in proposal.get}
+        remaining = [p for p in their_starters if p.sleeper_id not in leaving]
+        after = optimize_lineup(remaining + list(proposal.give), slots)
+        kept = {p.sleeper_id for p in after.assignments.values()}
+        they_start_incoming = [p for p in proposal.give if p.sleeper_id in kept]
+    else:
+        outgoing_ids = {p.sleeper_id for p in proposal.get}
+        displaced = [
+            player
+            for player in lineup_optimal(their_roster, slots).assignments.values()
+            if player.sleeper_id not in their_after_starters
+            and player.sleeper_id not in outgoing_ids
+        ]
 
     # Who is blocking the player I am sending, so my own reason is specific.
     blocked_by = None
     if sending_benched:
+        my_lineup_ids = (
+            {p.sleeper_id for p in my_starters} if my_starters else my_before_starters
+        )
         same_position = [
             player
             for player in my_roster
             if player.position == sending_benched[0].position
-            and player.sleeper_id in my_before_starters
+            and player.sleeper_id in my_lineup_ids
         ]
         blocked_by = max(same_position, key=lambda x: x.points) if same_position else None
 

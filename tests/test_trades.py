@@ -573,3 +573,80 @@ def test_ranking_handles_an_empty_list():
     from fantasylineup.engine.trades import rank_proposals
 
     assert rank_proposals([]) == []
+
+
+ZOO_SLOTS = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX", "K", "DEF"]
+
+
+def test_displacement_uses_their_real_lineup_not_our_ideal():
+    """Regression: the message named a player already on their bench.
+
+    Real case from the league. Projections rate Hunter Henry (153.5) above Juwan
+    Johnson (140.9), so the optimal lineup we would set for that manager starts
+    Henry. He does not agree -- he starts Johnson and benches Henry. Computing
+    displacement against our ideal produced "Hunter Henry moves to your bench"
+    about a player already sitting there, which the recipient can disprove by
+    glancing at his own team.
+
+    The claim has to be measured against the lineup actually set.
+    """
+    from fantasylineup.engine.trades import TradeProposal, explain_trade
+
+    kittle = p("George Kittle", "TE", 169.3)
+    montgomery = p("David Montgomery", "RB", 206.1)
+    derrick = p("Derrick Henry", "RB", 246.9)
+    hunter = p("Hunter Henry", "TE", 153.5)
+    juwan = p("Juwan Johnson", "TE", 140.9)
+
+    their_roster = [
+        p("Lamar Jackson", "QB", 326.0),
+        p("Christian McCaffrey", "RB", 291.0),
+        derrick,
+        p("Mike Evans", "WR", 222.2),
+        p("Jameson Williams", "WR", 206.2),
+        p("Brian Thomas", "WR", 195.4),
+        p("Davante Adams", "WR", 192.5),
+        hunter,
+        juwan,
+        p("Chris Boswell", "K", 67.0),
+        p("Minnesota Vikings", "DEF", 102.0),
+    ]
+    # What that manager actually runs: Johnson starts, Hunter Henry benched.
+    their_set = [
+        p("Lamar Jackson", "QB", 326.0),
+        p("Christian McCaffrey", "RB", 291.0),
+        derrick,
+        p("Davante Adams", "WR", 192.5),
+        p("Jameson Williams", "WR", 206.2),
+        juwan,
+        p("Mike Evans", "WR", 222.2),
+        p("Brian Thomas", "WR", 195.4),
+        p("Chris Boswell", "K", 67.0),
+        p("Minnesota Vikings", "DEF", 102.0),
+    ]
+    my_roster = [kittle, montgomery, p("Trey McBride", "TE", 235.0), p("Bijan", "RB", 325.0)]
+
+    proposal = TradeProposal(2, "Unc Show", (kittle, montgomery), (derrick,), 27.0, 5.9)
+    rationale = explain_trade(
+        proposal, my_roster, their_roster, ZOO_SLOTS, their_starters=their_set
+    )
+
+    # The pitch is hard-wrapped, so names can straddle a line break.
+    flat = " ".join(rationale.pitch.split())
+    assert "Juwan Johnson" in flat
+    assert "Hunter Henry moves" not in flat, "named a player who is already benched"
+
+
+def test_displacement_falls_back_when_no_lineup_is_set():
+    """Early season, or a manager who never sets a lineup: degrade, don't crash."""
+    from fantasylineup.engine.trades import TradeProposal, explain_trade
+
+    kittle = p("George Kittle", "TE", 169.3)
+    derrick = p("Derrick Henry", "RB", 246.9)
+    their_roster = [derrick, p("Their TE", "TE", 90.0), p("Their QB", "QB", 300.0)]
+    my_roster = [kittle, p("Trey McBride", "TE", 235.0)]
+
+    proposal = TradeProposal(2, "Unc Show", (kittle,), (derrick,), 9.0, 3.0)
+    rationale = explain_trade(proposal, my_roster, their_roster, ZOO_SLOTS, their_starters=[])
+    assert rationale.pitch
+    assert "George Kittle" in " ".join(rationale.pitch.split())

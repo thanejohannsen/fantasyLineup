@@ -206,6 +206,7 @@ __all__ = [
     "roster_names",
     "blended_projections",
     "compute_availability",
+    "current_starters",
     "fetch_market_fits",
     "find_opponent",
     "lock_context",
@@ -340,3 +341,31 @@ def league_activity(
 
     moves.sort(key=lambda m: m.when or datetime.min.replace(tzinfo=UTC), reverse=True)
     return moves[:limit]
+
+
+def current_starters(
+    conn: sqlite3.Connection,
+    league_id: str,
+    roster_id: int,
+    players: list[PlayerProjection],
+) -> list[PlayerProjection]:
+    """The lineup a team actually has set, in slot order.
+
+    Distinct from the lineup we would choose for them. Any claim made to another
+    manager about his own roster has to be measured against this, or it is
+    trivially falsifiable.
+    """
+    row = conn.execute(
+        "SELECT MAX(snapshot_id) AS sid FROM roster_snapshots WHERE league_id = ?",
+        (league_id,),
+    ).fetchone()
+    if row is None or row["sid"] is None:
+        return []
+    by_id = {p.sleeper_id: p for p in players}
+    rows = conn.execute(
+        """SELECT sleeper_id, slot_index FROM roster_players
+           WHERE snapshot_id = ? AND roster_id = ? AND is_starter = 1
+           ORDER BY slot_index""",
+        (row["sid"], roster_id),
+    )
+    return [by_id[r["sleeper_id"]] for r in rows if r["sleeper_id"] in by_id]

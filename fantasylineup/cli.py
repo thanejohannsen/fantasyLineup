@@ -20,6 +20,7 @@ from .model.calibration import (
 from .model.projections import REST_OF_SEASON, latest_projections, sync_projections
 from .pipeline import (
     all_rosters,
+    current_starters,
     league_activity,
     blended_projections,
     fetch_market_fits,
@@ -224,8 +225,21 @@ def cmd_moves(args: argparse.Namespace) -> int:
         proposals = best_trades_across_league(
             my_players, rosters, names, slots, cfg.league.roster_id, limit=args.limit
         )
+        my_set = current_starters(conn, cfg.league.league_id, cfg.league.roster_id, my_players)
         rationales = {
-            i: explain_trade(p, my_players, rosters[p.partner_roster_id], slots)
+            i: explain_trade(
+                p,
+                my_players,
+                rosters[p.partner_roster_id],
+                slots,
+                my_starters=my_set,
+                their_starters=current_starters(
+                    conn,
+                    cfg.league.league_id,
+                    p.partner_roster_id,
+                    rosters[p.partner_roster_id],
+                ),
+            )
             for i, p in enumerate(proposals)
         }
 
@@ -350,8 +364,23 @@ def cmd_refresh(args: argparse.Namespace) -> int:
                 my_ros, rosters, roster_names(conn, cfg.league.league_id), slots,
                 cfg.league.roster_id, limit=4,
             )
+            my_set = current_starters(
+                conn, cfg.league.league_id, cfg.league.roster_id, my_ros
+            )
             rationales = {
-                i: explain_trade(p, my_ros, rosters[p.partner_roster_id], slots)
+                i: explain_trade(
+                    p,
+                    my_ros,
+                    rosters[p.partner_roster_id],
+                    slots,
+                    my_starters=my_set,
+                    their_starters=current_starters(
+                        conn,
+                        cfg.league.league_id,
+                        p.partner_roster_id,
+                        rosters[p.partner_roster_id],
+                    ),
+                )
                 for i, p in enumerate(proposals)
             }
             activity = league_activity(
