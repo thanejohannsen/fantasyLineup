@@ -86,6 +86,16 @@ td.slot, th.slot { width: 3.4rem; }
   border-radius: 6px; padding: .2rem .55rem; font-size: .74rem; cursor: pointer;
 }
 .copy:hover { color: var(--ink); border-color: var(--muted); }
+.rank { color: var(--muted); font-size: .8rem; font-variant-numeric: tabular-nums; }
+.badge {
+  background: var(--accent); color: var(--panel); border-radius: 5px;
+  padding: .1rem .45rem; font-size: .68rem; letter-spacing: .04em;
+  text-transform: uppercase; font-weight: 600;
+}
+.conflict { color: var(--warn); font-size: .82rem; margin: .45rem 0 0; }
+.feed { margin: 0; padding-left: 1.1rem; font-size: .86rem; }
+.feed li { margin-bottom: .25rem; }
+.feed li.mine { color: var(--accent); font-weight: 600; }
 """
 
 
@@ -258,7 +268,7 @@ def render_dashboard(advisory: Advisory, team_name: str, moves_html: str = "") -
 """
 
 
-def render_moves_panel(targets, proposals, rationales=None) -> str:
+def render_moves_panel(targets, proposals, rationales=None, activity=None) -> str:
     """Waiver and trade panel, appended to the dashboard."""
     parts = []
 
@@ -273,9 +283,14 @@ def render_moves_panel(targets, proposals, rationales=None) -> str:
         parts.append(f'<div class="panel"><h2>Waiver targets</h2><ul>{rows}</ul></div>')
 
     if proposals:
+        from ..engine.trades import rank_proposals
+
         rationales = rationales or {}
         blocks = []
-        for i, p in enumerate(proposals):
+        ordered = list(proposals)
+        for ranked in rank_proposals(ordered):
+            p = ranked.proposal
+            i = ordered.index(p)
             r = rationales.get(i)
             why = f'<p class="why"><b>Why:</b> {_esc(r.why)}</p>' if r else ""
             angle = f'<p class="why"><b>Their side:</b> {_esc(r.their_angle)}</p>' if r else ""
@@ -286,20 +301,52 @@ def render_moves_panel(targets, proposals, rationales=None) -> str:
                     f'<button class="copy" data-copy="pitch{i}">Copy message</button>'
                     f'<pre class="pitch" id="pitch{i}">{_esc(r.pitch)}</pre></div>'
                 )
+            badge = (
+                '<span class="badge">Send this one</span>'
+                if ranked.rank == 1
+                else ""
+            )
+            conflict = ""
+            if ranked.conflicts_with:
+                others = ", ".join(f"#{c}" for c in ranked.conflicts_with)
+                conflict = (
+                    f'<p class="conflict">Competes with {others} - all need '
+                    f"{_esc(', '.join(ranked.shared_players))}. Only one can happen.</p>"
+                )
             blocks.append(
                 f'<div class="trade"><div class="tradehead">'
+                f'<span class="rank">#{ranked.rank}</span> '
                 f"<strong>{_esc(p.partner_name)}</strong> "
-                f'<span class="slot">[{_esc(p.shape)}]</span></div>'
+                f'<span class="slot">[{_esc(p.shape)}]</span> {badge}</div>'
                 f"<div>Send <b>{_esc(', '.join(x.name for x in p.give))}</b></div>"
                 f"<div>Get <b>{_esc(', '.join(x.name for x in p.get))}</b></div>"
                 f'<div class="slot">you +{p.my_gain:.0f}, them +{p.their_gain:.0f} '
-                f"rest-of-season pts</div>{why}{angle}{pitch}</div>"
+                f"rest-of-season pts</div>{conflict}{why}{angle}{pitch}</div>"
             )
         parts.append(
-            f'<div class="panel"><h2>Trade offers</h2>{"".join(blocks)}'
+            f'<div class="panel"><h2>Trade offers</h2>'
+            f'<p class="note">Ranked by value to you. Offers sharing a player are '
+            f"mutually exclusive - send the top one first and wait.</p>"
+            f'{"".join(blocks)}'
             f'<p class="note">Both sides gain, which is what makes an offer worth '
             f"sending. Every claim in these messages comes from roster data the "
             f"other manager can already see.</p></div>"
+        )
+
+    if activity:
+        rows = "".join(
+            # Class computed outside the f-string: escaped quotes are not
+            # permitted inside an f-string expression.
+            "<li{}>{}</li>".format(
+                ' class="mine"' if m.involves_me else "", _esc(m.summary)
+            )
+            for m in activity
+        )
+        parts.append(
+            f'<div class="panel"><h2>Recent league activity</h2><ul class="feed">{rows}</ul>'
+            f'<p class="note">Narrative only. Rosters are re-read in full every run, '
+            f"so a completed trade or waiver is reflected whether or not its "
+            f"transaction record was seen.</p></div>"
         )
 
     return "".join(parts)

@@ -73,31 +73,41 @@ td.slot, th.slot { width: 3.4rem; }
   border-radius: 6px; padding: .2rem .55rem; font-size: .74rem; cursor: pointer;
 }
 .copy:hover { color: var(--ink); border-color: var(--muted); }
+.rank { color: var(--muted); font-size: .8rem; font-variant-numeric: tabular-nums; }
+.badge {
+  background: var(--accent); color: var(--panel); border-radius: 5px;
+  padding: .1rem .45rem; font-size: .68rem; letter-spacing: .04em;
+  text-transform: uppercase; font-weight: 600;
+}
+.conflict { color: var(--warn); font-size: .82rem; margin: .45rem 0 0; }
+.feed { margin: 0; padding-left: 1.1rem; font-size: .86rem; }
+.feed li { margin-bottom: .25rem; }
+.feed li.mine { color: var(--accent); font-weight: 600; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>ZOO + PEARL</h1>
-  <div class="sub">Updated Tue 08 Sep 2026, 15:40 UTC &middot; <span class="when" data-kickoff="2026-09-11T00:35:00+00:00">Next lock in 2d 8h (Fri 00:35 UTC)</span></div>
+  <div class="sub">Updated Tue 08 Sep 2026, 15:44 UTC &middot; <span class="when" data-kickoff="2026-09-11T00:35:00+00:00">Next lock in 2d 8h (Fri 00:35 UTC)</span></div>
   <div class="panel"><h2>Week 1 vs jakered47</h2><div class="headline">57% <small>win probability</small></div><div class="posture">close matchup: maximise expected points</div><div class="note">Projected 132 pts (103-163, 10th-90th percentile)</div></div>
   <div class="panel"><h2>Lineup</h2><p>Your current lineup is already optimal. Nothing to change.</p></div>
   <div class="panel"><h2>Recommended lineup</h2><div class="scroll"><table>
     <tr><th>Slot</th><th>Player</th><th class="num">Proj</th><th class="when">Locks</th></tr>
     <tr><td class="slot">QB</td><td>Jayden Daniels <span class="slot">vs PHI</span></td><td class="num">17.9</td><td class="when" data-kickoff="2026-09-13T20:25:00+00:00">5d 4h</td></tr><tr><td class="slot">RB</td><td>Bijan Robinson <span class="slot">vs PIT</span></td><td class="num">21.4</td><td class="when" data-kickoff="2026-09-13T17:00:00+00:00">5d 1h</td></tr><tr><td class="slot">RB</td><td>David Montgomery <span class="slot">vs BUF</span></td><td class="num">13.9</td><td class="when" data-kickoff="2026-09-13T17:00:00+00:00">5d 1h</td></tr><tr><td class="slot">WR</td><td>Drake London <span class="slot">vs PIT</span></td><td class="num">14.8</td><td class="when" data-kickoff="2026-09-13T17:00:00+00:00">5d 1h</td></tr><tr><td class="slot">WR</td><td>Parker Washington <span class="slot">vs CLE</span></td><td class="num">11.9</td><td class="when" data-kickoff="2026-09-13T17:00:00+00:00">5d 1h</td></tr><tr><td class="slot">TE</td><td>Trey McBride <span class="slot">vs LAC</span></td><td class="num">15.6</td><td class="when" data-kickoff="2026-09-13T20:25:00+00:00">5d 4h</td></tr><tr><td class="slot">FLEX</td><td>Rico Dowdle <span class="slot">vs ATL</span></td><td class="num">12.5</td><td class="when" data-kickoff="2026-09-13T17:00:00+00:00">5d 1h</td></tr><tr><td class="slot">FLEX</td><td>Rachaad White <span class="slot">vs PHI</span></td><td class="num">10.2</td><td class="when" data-kickoff="2026-09-13T20:25:00+00:00">5d 4h</td></tr><tr><td class="slot">K</td><td>Brandon Aubrey <span class="slot">vs NYG</span></td><td class="num">6.8</td><td class="when" data-kickoff="2026-09-14T00:20:00+00:00">5d 8h</td></tr><tr><td class="slot">DEF</td><td>Los Angeles Rams <span class="slot">vs SF</span></td><td class="num">7.1</td><td class="when" data-kickoff="2026-09-11T00:35:00+00:00">2d 8h</td></tr>
   </table></div></div>
-  <div class="panel"><h2>Trade offers</h2><div class="trade"><div class="tradehead"><strong>Unc Show</strong> <span class="slot">[2-for-1]</span></div><div>Send <b>George Kittle, David Montgomery</b></div><div>Get <b>Derrick Henry</b></div><div class="slot">you +27, them +6 rest-of-season pts</div><p class="why"><b>Why:</b> Derrick Henry starts for you immediately. Worth +27 points rest of season.</p><p class="why"><b>Their side:</b> George Kittle starts for them (they roster 2 at TE); David Montgomery starts for them (they roster 4 at RB). Worth +6 to them.</p><div class="pitchwrap"><button class="copy" data-copy="pitch0">Copy message</button><pre class="pitch" id="pitch0">George Kittle and David Montgomery for Derrick Henry?
+  <div class="panel"><h2>Trade offers</h2><p class="note">Ranked by value to you. Offers sharing a player are mutually exclusive - send the top one first and wait.</p><div class="trade"><div class="tradehead"><span class="rank">#1</span> <strong>Unc Show</strong> <span class="slot">[2-for-1]</span> <span class="badge">Send this one</span></div><div>Send <b>George Kittle, David Montgomery</b></div><div>Get <b>Derrick Henry</b></div><div class="slot">you +27, them +6 rest-of-season pts</div><p class="why"><b>Why:</b> Derrick Henry starts for you immediately. Worth +27 points rest of season.</p><p class="why"><b>Their side:</b> George Kittle starts for them (they roster 2 at TE); David Montgomery starts for them (they roster 4 at RB). Worth +6 to them.</p><div class="pitchwrap"><button class="copy" data-copy="pitch0">Copy message</button><pre class="pitch" id="pitch0">George Kittle and David Montgomery for Derrick Henry?
 
 George Kittle and David Montgomery would both start for you - Hunter
 Henry moves to your bench. Worth about +6 points to your lineup rest of
 season by my numbers.
 
 I&#x27;m carrying more depth than I can start and would rather run one player
-I can actually use.</pre></div></div><div class="trade"><div class="tradehead"><strong>Ryan Criblett</strong> <span class="slot">[1-for-1]</span></div><div>Send <b>George Kittle</b></div><div>Get <b>Alec Pierce</b></div><div class="slot">you +9, them +3 rest-of-season pts</div><p class="why"><b>Why:</b> Alec Pierce starts for you immediately. Worth +9 points rest of season.</p><p class="why"><b>Their side:</b> George Kittle starts for them (they roster 1 at TE). Worth +3 to them.</p><div class="pitchwrap"><button class="copy" data-copy="pitch1">Copy message</button><pre class="pitch" id="pitch1">George Kittle for Alec Pierce?
+I can actually use.</pre></div></div><div class="trade"><div class="tradehead"><span class="rank">#2</span> <strong>Ryan Criblett</strong> <span class="slot">[1-for-1]</span> </div><div>Send <b>George Kittle</b></div><div>Get <b>Alec Pierce</b></div><div class="slot">you +9, them +3 rest-of-season pts</div><p class="conflict">Competes with #1 - all need George Kittle. Only one can happen.</p><p class="why"><b>Why:</b> Alec Pierce starts for you immediately. Worth +9 points rest of season.</p><p class="why"><b>Their side:</b> George Kittle starts for them (they roster 1 at TE). Worth +3 to them.</p><div class="pitchwrap"><button class="copy" data-copy="pitch1">Copy message</button><pre class="pitch" id="pitch1">George Kittle for Alec Pierce?
 
 George Kittle would start for you - Harold Fannin moves to your bench.
 Worth about +3 points to your lineup rest of season by my numbers.
 
-Alec Pierce fills a hole for me.</pre></div></div><div class="trade"><div class="tradehead"><strong>DomesticTofu</strong> <span class="slot">[1-for-1]</span></div><div>Send <b>George Kittle</b></div><div>Get <b>Jaylen Waddle</b></div><div class="slot">you +7, them +5 rest-of-season pts</div><p class="why"><b>Why:</b> Jaylen Waddle starts for you immediately. Worth +7 points rest of season.</p><p class="why"><b>Their side:</b> George Kittle starts for them (they roster 2 at TE). Worth +5 to them.</p><div class="pitchwrap"><button class="copy" data-copy="pitch2">Copy message</button><pre class="pitch" id="pitch2">George Kittle for Jaylen Waddle?
+Alec Pierce fills a hole for me.</pre></div></div><div class="trade"><div class="tradehead"><span class="rank">#3</span> <strong>DomesticTofu</strong> <span class="slot">[1-for-1]</span> </div><div>Send <b>George Kittle</b></div><div>Get <b>Jaylen Waddle</b></div><div class="slot">you +7, them +5 rest-of-season pts</div><p class="conflict">Competes with #1, #2 - all need George Kittle. Only one can happen.</p><p class="why"><b>Why:</b> Jaylen Waddle starts for you immediately. Worth +7 points rest of season.</p><p class="why"><b>Their side:</b> George Kittle starts for them (they roster 2 at TE). Worth +5 to them.</p><div class="pitchwrap"><button class="copy" data-copy="pitch2">Copy message</button><pre class="pitch" id="pitch2">George Kittle for Jaylen Waddle?
 
 George Kittle would start for you - Dalton Kincaid moves to your bench.
 Worth about +5 points to your lineup rest of season by my numbers.

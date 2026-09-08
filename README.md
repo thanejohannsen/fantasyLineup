@@ -25,6 +25,11 @@ hand in the app.
   he adds to *your* best legal lineup, which is zero for a fifth running back on
   a roster already starting four. Trades must improve both sides, or they get
   declined and the offer was wasted effort.
+- **Ranks trades by value to you and flags the ones that compete.** Several good
+  offers usually route through the same surplus player, and the moment he is
+  traded the rest are dead. A flat list invites sending all of them and honouring
+  whichever is accepted first, which is how you take the worst of three offers you
+  could have had.
 - **Explains each trade and drafts the message.** Every offer comes with why it
   helps you, why the other manager should say yes, and a sendable pitch. Each
   claim is derived from roster state both managers can already see — a message
@@ -106,6 +111,22 @@ data. Until then the capped, Sleeper-anchored blend is a deliberately
 conservative default, not a measured improvement.
 
 Measured on 2025: Sleeper MAE 4.06 points, bias -0.02 over 6,809 observations.
+
+## Does it notice completed trades?
+
+Yes, and not because it watches for them. Availability and every roster figure
+are recomputed from a complete roster snapshot on each run, so any change --
+trade, waiver claim, drop, someone else's pickup -- is reflected on the next
+sync whether or not its transaction record was ever read. That was the point of
+deriving availability rather than accumulating it.
+
+The transaction feed on the dashboard is narrative on top of that: it says
+*why* something moved, so a vanished waiver target or a void trade proposal has
+an explanation rather than just disappearing.
+
+Worth knowing about this league specifically: across the whole 2025 season it
+recorded 227 transactions and **not one trade**. Every proposal this tool
+generates would be breaking new ground, which is also why the pitch text matters.
 
 ## Known limitations
 

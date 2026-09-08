@@ -130,7 +130,9 @@ def render_advisory(advisory: Advisory, team_name: str = "", blends: dict | None
     return "\n".join(lines)
 
 
-def render_moves(targets, proposals, roster_limit: int, near_miss=None, rationales=None) -> str:
+def render_moves(
+    targets, proposals, roster_limit: int, near_miss=None, rationales=None, activity=None
+) -> str:
     """Waiver targets and trade offers.
 
     Gains are rest-of-season points added to the best legal lineup, which is
@@ -158,19 +160,31 @@ def render_moves(targets, proposals, roster_limit: int, near_miss=None, rational
         )
 
     lines.append("")
-    lines.append("TRADE OFFERS  (both sides must gain, or it gets declined)")
+    lines.append("TRADE OFFERS  (ranked by value to you; both sides must gain)")
     if not proposals:
         lines.append("  No mutually beneficial trade found.")
         lines.append(
             "  With two FLEX slots a surplus running back or receiver still starts, "
             "so positional imbalance has to be severe before a swap helps either side."
         )
+    from ..engine.trades import rank_proposals
+
     rationales = rationales or {}
-    for i, p in enumerate(proposals):
+    ranked = rank_proposals(list(proposals))
+    for r in ranked:
+        p = r.proposal
+        i = list(proposals).index(p)
         give = ", ".join(f"{x.name} ({x.points:.1f})" for x in p.give)
         get = ", ".join(f"{x.name} ({x.points:.1f})" for x in p.get)
         lines.append("")
-        lines.append(f"  {p.partner_name}  [{p.shape}]")
+        flag = "SEND THIS ONE" if r.rank == 1 else ""
+        lines.append(f"  #{r.rank}  {p.partner_name}  [{p.shape}]  {flag}")
+        if r.conflicts_with:
+            others = ", ".join(f"#{c}" for c in r.conflicts_with)
+            lines.append(
+                f"      -- rules out / ruled out by {others}: "
+                f"both need {', '.join(r.shared_players)}"
+            )
         lines.append(f"      you send    {give}")
         lines.append(f"      you receive {get}")
         lines.append(f"      you +{p.my_gain:.1f} ROS pts, them +{p.their_gain:.1f}")
@@ -184,6 +198,13 @@ def render_moves(targets, proposals, roster_limit: int, near_miss=None, rational
             for para in r.pitch.split("\n"):
                 lines.append(f"      {para}" if para else "")
             lines.append("      -----------------------")
+
+    if activity:
+        lines.append("")
+        lines.append("RECENT LEAGUE ACTIVITY")
+        for m in activity:
+            mark = " <- you" if m.involves_me else ""
+            lines.append(f"  {m.summary}{mark}")
 
     lines.append("")
     lines.append(f"Roster limit {roster_limit}. Sleeper's API is read-only: execute these by hand.")

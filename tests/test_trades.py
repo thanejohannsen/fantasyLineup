@@ -516,3 +516,60 @@ def test_pitch_names_who_the_incoming_player_displaces():
     slots = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX"]
     _, rationale = _explained(mine, theirs, slots)
     assert "moves to your bench" in rationale.pitch or "start for you" in rationale.pitch
+
+
+def _prop(partner, give, get, my_gain, their_gain):
+    from fantasylineup.engine.trades import TradeProposal
+
+    return TradeProposal(hash(partner) % 100, partner, give, get, my_gain, their_gain)
+
+
+def test_ranking_flags_mutually_exclusive_offers():
+    """Offers routing through one surplus player cannot all happen.
+
+    Presented as a flat list, a manager sends all of them and honours whichever
+    is accepted first -- which is how you end up taking the worst of three
+    offers you could have had. The best one has to be identifiable.
+    """
+    from fantasylineup.engine.trades import rank_proposals
+
+    kittle = p("Kittle", "TE", 169.0)
+    montgomery = p("Montgomery", "RB", 206.0)
+    proposals = [
+        _prop("Ryan", (kittle,), (p("Pierce", "WR", 178.0),), 8.6, 3.1),
+        _prop("Unc Show", (kittle, montgomery), (p("Henry", "RB", 247.0),), 27.0, 5.9),
+        _prop("Tofu", (kittle,), (p("Waddle", "WR", 177.0),), 7.4, 5.0),
+        _prop("Other", (p("Spears", "RB", 115.0),), (p("Zay", "WR", 150.0),), 5.0, 2.0),
+    ]
+    ranked = rank_proposals(proposals)
+
+    # Ordered by our own gain, regardless of input order.
+    assert [r.proposal.partner_name for r in ranked] == ["Unc Show", "Ryan", "Tofu", "Other"]
+    assert [r.rank for r in ranked] == [1, 2, 3, 4]
+
+    best = ranked[0]
+    assert best.is_priority and not best.conflicts_with
+
+    # The two lesser Kittle deals are blocked by the best one.
+    assert ranked[1].conflicts_with == (1,)
+    assert ranked[1].shared_players == ("Kittle",)
+    assert ranked[2].conflicts_with == (1, 2)
+
+    # A deal sharing nobody stays independently sendable.
+    assert ranked[3].is_priority
+
+
+def test_ranking_of_independent_offers_has_no_conflicts():
+    from fantasylineup.engine.trades import rank_proposals
+
+    proposals = [
+        _prop("A", (p("a1", "RB", 100.0),), (p("a2", "WR", 110.0),), 9.0, 2.0),
+        _prop("B", (p("b1", "TE", 100.0),), (p("b2", "WR", 110.0),), 4.0, 2.0),
+    ]
+    assert all(r.is_priority for r in rank_proposals(proposals))
+
+
+def test_ranking_handles_an_empty_list():
+    from fantasylineup.engine.trades import rank_proposals
+
+    assert rank_proposals([]) == []

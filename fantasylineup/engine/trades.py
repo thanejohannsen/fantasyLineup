@@ -367,3 +367,60 @@ def explain_trade(
     # Wrapped so it pastes into a messaging app without reflowing into one line.
     pitch = "\n\n".join("\n".join(textwrap.wrap(line, 72)) for line in lines)
     return TradeRationale(why=why, their_angle=their_angle, pitch=pitch)
+
+
+@dataclass(frozen=True)
+class RankedProposal:
+    """A proposal with its priority, and what it rules out.
+
+    Proposals are not independent. Several of the best offers usually route
+    through the same surplus player, and the moment he is traded the rest are
+    dead. Presenting them as a flat list invites sending all of them and then
+    honouring whichever is accepted first, which is how a manager ends up taking
+    the worst of three offers he could have had.
+    """
+
+    rank: int
+    proposal: TradeProposal
+    conflicts_with: tuple[int, ...]
+    shared_players: tuple[str, ...]
+
+    @property
+    def is_priority(self) -> bool:
+        """Nothing better already claims a player this deal needs."""
+        return not self.conflicts_with
+
+
+def rank_proposals(proposals: list[TradeProposal]) -> list[RankedProposal]:
+    """Order by value to us, flagging deals that compete for the same player.
+
+    Ranking is by our own gain, which is the whole point of the exercise. The
+    conflict flag then answers the question a flat list cannot: of these offers,
+    which one should actually be sent first.
+    """
+    ordered = sorted(proposals, key=lambda t: (t.my_gain, t.their_gain), reverse=True)
+
+    ranked: list[RankedProposal] = []
+    for index, proposal in enumerate(ordered):
+        involved = {p.sleeper_id for p in (*proposal.give, *proposal.get)}
+        conflicts: list[int] = []
+        shared: list[str] = []
+        for better_index, better in enumerate(ordered[:index]):
+            overlap = involved & {p.sleeper_id for p in (*better.give, *better.get)}
+            if overlap:
+                conflicts.append(better_index + 1)
+                names = {
+                    p.name
+                    for p in (*proposal.give, *proposal.get)
+                    if p.sleeper_id in overlap
+                }
+                shared.extend(sorted(names))
+        ranked.append(
+            RankedProposal(
+                rank=index + 1,
+                proposal=proposal,
+                conflicts_with=tuple(conflicts),
+                shared_players=tuple(dict.fromkeys(shared)),
+            )
+        )
+    return ranked

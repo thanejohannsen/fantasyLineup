@@ -199,7 +199,9 @@ def lock_context(
 
 
 __all__ = [
+    "LeagueMove",
     "MatchupContext",
+    "league_activity",
     "all_rosters",
     "roster_names",
     "blended_projections",
@@ -248,3 +250,93 @@ def roster_names(conn: sqlite3.Connection, league_id: str) -> dict[int, str]:
             (league_id, row["sid"]),
         )
     }
+
+
+@dataclass(frozen=True)
+class LeagueMove:
+    """One completed transaction, in plain language."""
+
+    kind: str          # 'trade' | 'waiver' | 'free_agent'
+    when: datetime | None
+    summary: str
+    involves_me: bool
+    player_ids: frozenset[str]
+
+
+def league_activity(
+    conn: sqlite3.Connection,
+    client: SleeperClient,
+    league_id: str,
+    week: int,
+    my_roster_id: int,
+    limit: int = 8,
+) -> list[LeagueMove]:
+    """Recent adds, drops and trades across the league.
+
+    This is narrative only. Correctness never depends on it: availability and
+    every roster figure are derived from a fresh snapshot on each run, so a
+    completed trade is reflected whether or not its transaction record was ever
+    read. The feed exists to say *why* something changed -- that a waiver target
+    is gone, or that a proposal is void because the player moved.
+    """
+    try:
+        raw = client.transactions(league_id, week)
+    except Exception as exc:  # noqa: BLE001 - narrative only, never fatal
+        log.warning("Could not read transactions: %s", exc)
+        return []
+
+    names = {
+        r["sleeper_id"]: r["full_name"]
+        for r in conn.execute("SELECT sleeper_id, full_name FROM players")
+    }
+    teams = roster_names(conn, league_id)
+
+    moves: list[LeagueMove] = []
+    for entry in raw:
+        if entry.get("status") != "complete":
+            continue
+        adds = entry.get("adds") or {}
+        drops = entry.get("drops") or {}
+        roster_ids = [int(r) for r in (entry.get("roster_ids") or [])]
+        when = None
+        if entry.get("status_updated"):
+            when = datetime.fromtimestamp(entry["status_updated"] / 1000, tz=UTC)
+
+        def who(pid: str, mapping: dict) -> str:
+            rid = mapping.get(pid)
+            return teams.get(int(rid), f"roster {rid}") if rid is not None else "?"
+
+        kind = entry.get("type") or "move"
+        if kind == "trade":
+            parts = [
+                f"{names.get(pid, pid)} to {who(pid, adds)}" for pid in adds
+            ]
+            summary = "Trade: " + "; ".join(parts) if parts else "Trade completed"
+        else:
+            added = ", ".join(names.get(pid, pid) for pid in adds)
+            dropped = ", ".join(names.get(pid, pid) for pid in drops)
+            team = teams.get(roster_ids[0], "someone") if roster_ids else "someone"
+            label = "claimed" if kind == "waiver" else "added"
+            # A drop with no corresponding add is a plain cut, not an
+            # acquisition of nobody.
+            if added and dropped:
+                summary = f"{team} {label} {added}, dropped {dropped}"
+            elif added:
+                summary = f"{team} {label} {added}"
+            elif dropped:
+                summary = f"{team} dropped {dropped}"
+            else:
+                summary = f"{team} made a roster move"
+
+        moves.append(
+            LeagueMove(
+                kind=kind,
+                when=when,
+                summary=summary,
+                involves_me=my_roster_id in roster_ids,
+                player_ids=frozenset({*adds, *drops}),
+            )
+        )
+
+    moves.sort(key=lambda m: m.when or datetime.min.replace(tzinfo=UTC), reverse=True)
+    return moves[:limit]

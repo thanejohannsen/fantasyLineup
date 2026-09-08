@@ -20,6 +20,7 @@ from .model.calibration import (
 from .model.projections import REST_OF_SEASON, latest_projections, sync_projections
 from .pipeline import (
     all_rosters,
+    league_activity,
     blended_projections,
     fetch_market_fits,
     find_opponent,
@@ -228,7 +229,11 @@ def cmd_moves(args: argparse.Namespace) -> int:
             for i, p in enumerate(proposals)
         }
 
-    print(render_moves(targets, proposals, roster_limit, near_miss, rationales))
+        activity = league_activity(
+            conn, client, cfg.league.league_id, _resolve_week(client, None), cfg.league.roster_id
+        )
+
+    print(render_moves(targets, proposals, roster_limit, near_miss, rationales, activity))
     return 0
 
 
@@ -349,7 +354,10 @@ def cmd_refresh(args: argparse.Namespace) -> int:
                 i: explain_trade(p, my_ros, rosters[p.partner_roster_id], slots)
                 for i, p in enumerate(proposals)
             }
-            moves_html = render_moves_panel(targets, proposals, rationales)
+            activity = league_activity(
+                conn, client, cfg.league.league_id, week, cfg.league.roster_id
+            )
+            moves_html = render_moves_panel(targets, proposals, rationales, activity)
 
     target = cfg.paths.site / "index.html"
     target.write_text(
