@@ -163,3 +163,45 @@ def test_multi_position_eligibility():
     )
     lineup = optimize_lineup([swiss], ["WR"])
     assert lineup.assignments[0].sleeper_id == "swiss"
+
+
+def test_canonicalization_prefers_dedicated_slot():
+    """The best running back belongs in RB, not FLEX, when both are optimal.
+
+    The optimizer is indifferent -- both assignments score identically -- but
+    advice that buries the star in FLEX reads like a mistake and invites the
+    reader to override correct advice.
+    """
+    slots = ["RB", "FLEX"]
+    players = [p("star", "RB", 21.0), p("scrub", "RB", 12.0)]
+    lineup = optimize_lineup(players, slots)
+    assert lineup.assignments[0].sleeper_id == "star"
+    assert lineup.assignments[1].sleeper_id == "scrub"
+
+
+def test_canonicalization_preserves_total():
+    """Reordering is presentation only and must never change the score."""
+    slots = ["RB", "WR", "FLEX", "FLEX"]
+    players = [
+        p("rb1", "RB", 20.0),
+        p("rb2", "RB", 9.0),
+        p("wr1", "WR", 18.0),
+        p("wr2", "WR", 11.0),
+        p("te1", "TE", 6.0),
+    ]
+    lineup = optimize_lineup(players, slots)
+    assert lineup.total_points == pytest.approx(58.0)
+    assert lineup.assignments[0].sleeper_id == "rb1"
+    assert lineup.assignments[1].sleeper_id == "wr1"
+
+
+def test_canonicalization_never_moves_a_locked_player():
+    """A player whose game kicked off must stay exactly where he is.
+
+    Reshuffling him would produce a lineup that can no longer legally be set.
+    """
+    slots = ["RB", "FLEX"]
+    players = [p("locked_scrub", "RB", 4.0, locked=True), p("star", "RB", 22.0)]
+    lineup = optimize_lineup(players, slots, forced={0: "locked_scrub"})
+    assert lineup.assignments[0].sleeper_id == "locked_scrub"
+    assert lineup.assignments[1].sleeper_id == "star"

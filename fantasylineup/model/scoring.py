@@ -10,6 +10,25 @@ settings produce the number that will actually appear on the scoreboard.
 Keys present in the stat payload but absent from the settings (``pts_ppr``,
 ``gp``, ``rec_tgt``, ``adp_dd_ppr``, ...) are informational and drop out
 naturally.
+
+Known limitation -- defensive points-allowed tiers
+--------------------------------------------------
+Defensive scoring is tiered: 0 points allowed is worth 10, 1-6 is worth 7,
+14-20 is worth 1, and so on. Sleeper's projection expresses this by marking a
+single modal bucket with 1.0 (``pts_allow_14_20: 1.0`` alongside
+``pts_allow: 16.0``) and omitting every other bucket.
+
+Scoring that literally, as this module does, treats the most likely bucket as
+certain. It is right that the term is included -- this league scores that tier
+and Sleeper's generic ``pts_ppr`` simply ignores it, which is why our DST
+numbers run about a point higher than theirs -- but collapsing the distribution
+to its mode understates defensive variance in both directions: a shutout is
+worth 10 and a blowout loss is worth -4, and neither shows up.
+
+Doing better needs a distribution over points allowed rather than a point
+estimate. Kalshi's game total and spread markets imply exactly that, so this is
+revisited once those are wired in; until then DST means are slightly optimistic
+and DST variance is badly understated.
 """
 
 from __future__ import annotations

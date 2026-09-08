@@ -170,7 +170,45 @@ def optimize_lineup(
 
     lineup.bench = [p for p in candidates if p.sleeper_id not in assigned_players]
     lineup.bench.sort(key=lambda p: p.points, reverse=True)
+    _canonicalize(lineup, pinned=frozenset(forced))
     return lineup
+
+
+def _canonicalize(lineup: Lineup, pinned: frozenset[int] = frozenset()) -> None:
+    """Reorder interchangeable assignments so the lineup reads naturally.
+
+    The optimizer is indifferent between putting the best running back in RB or
+    in FLEX -- both are optimal and score identically. Presenting the leftover
+    in RB and the star in FLEX is confusing to read and invites second-guessing
+    of advice that is actually correct.
+
+    This swaps players between slots only when both remain eligible, so the
+    total is provably unchanged; it is presentation, not optimization. The
+    preference is to put the higher-scoring player in the more restrictive slot,
+    which matches how a person would fill the roster by hand.
+
+    ``pinned`` slots are left alone: a player whose game has kicked off cannot
+    be moved, so reshuffling him would produce a lineup that is no longer legal
+    to set.
+    """
+    slots = lineup.slots
+    changed = True
+    while changed:
+        changed = False
+        for i in lineup.assignments:
+            for j in lineup.assignments:
+                if i >= j or i in pinned or j in pinned:
+                    continue
+                a, b = lineup.assignments[i], lineup.assignments[j]
+                spec_i = len(SLOT_ELIGIBILITY.get(slots[i], ()))
+                spec_j = len(SLOT_ELIGIBILITY.get(slots[j], ()))
+                if spec_i >= spec_j or b.points <= a.points:
+                    continue
+                # Slot i is more restrictive and holds the lesser player: swap
+                # if that stays legal.
+                if b.eligible_for(slots[i]) and a.eligible_for(slots[j]):
+                    lineup.assignments[i], lineup.assignments[j] = b, a
+                    changed = True
 
 
 def lineup_value(players: list[PlayerProjection], slots: list[str]) -> float:

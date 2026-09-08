@@ -110,7 +110,10 @@ CREATE INDEX IF NOT EXISTS idx_games_week ON games(season, week);
 CREATE TABLE IF NOT EXISTS projections (
     source     TEXT NOT NULL,     -- 'sleeper' | 'kalshi' | 'blend'
     season     INTEGER NOT NULL,
-    week       INTEGER,           -- NULL means rest-of-season totals
+    -- Week 0 means rest-of-season totals. Deliberately 0 and not NULL: SQLite
+    -- treats NULLs as distinct in a PRIMARY KEY, so NULL would silently permit
+    -- duplicate rows for the same player.
+    week       INTEGER NOT NULL,
     sleeper_id TEXT NOT NULL,
     as_of      TEXT NOT NULL,
     mean       REAL,
