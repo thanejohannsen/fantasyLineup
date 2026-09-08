@@ -163,6 +163,31 @@ def sync_league(conn: sqlite3.Connection, client: SleeperClient, league_id: str)
     return league
 
 
+def sync_users(conn: sqlite3.Connection, client: SleeperClient, league_id: str) -> int:
+    """Cache display and team names so an opponent can be named, not numbered."""
+    users = client.users(league_id)
+    now = utcnow_iso()
+    conn.executemany(
+        """INSERT INTO league_users (league_id, user_id, display_name, team_name, updated_at)
+           VALUES (?,?,?,?,?)
+           ON CONFLICT(league_id, user_id) DO UPDATE SET
+             display_name=excluded.display_name, team_name=excluded.team_name,
+             updated_at=excluded.updated_at""",
+        [
+            (
+                league_id,
+                u["user_id"],
+                u.get("display_name"),
+                (u.get("metadata") or {}).get("team_name"),
+                now,
+            )
+            for u in users
+        ],
+    )
+    conn.commit()
+    return len(users)
+
+
 def load_league(conn: sqlite3.Connection, league_id: str) -> dict[str, Any]:
     row = conn.execute(
         "SELECT payload FROM league_meta WHERE league_id = ?", (league_id,)

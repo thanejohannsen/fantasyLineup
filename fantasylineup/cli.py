@@ -8,7 +8,15 @@ import sys
 
 from .config import load_config
 from .db import open_db
-from .model.projections import REST_OF_SEASON, build_player_projections, sync_projections
+from .engine.lineup import starting_slots
+from .model.projections import sync_projections
+from .pipeline import (
+    blended_projections,
+    fetch_market_fits,
+    find_opponent,
+    roster_players_for,
+    standard_deviations,
+)
 from .report.advisory import build_advisory
 from .report.render_text import render_advisory
 from .sources.kickoffs import sync_kickoffs
@@ -20,6 +28,7 @@ from .sync import (
     sync_players,
     sync_rosters,
     sync_schedule,
+    sync_users,
 )
 
 
@@ -41,6 +50,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
         max_calls_per_min=cfg.sources.max_calls_per_min,
     ) as client:
         league = sync_league(conn, client, cfg.league.league_id)
+        sync_users(conn, client, cfg.league.league_id)
         n_players = sync_players(conn, client, ttl_hours=cfg.sources.players_dump_ttl_hours)
         snapshot_id = sync_rosters(conn, client, cfg.league.league_id)
         n_games = sync_schedule(conn, client, cfg.league.season)
@@ -79,6 +89,7 @@ def cmd_advise(args: argparse.Namespace) -> int:
 
         if not args.no_refresh:
             sync_rosters(conn, client, cfg.league.league_id)
+            sync_users(conn, client, cfg.league.league_id)
             sync_schedule(conn, client, cfg.league.season)
             sync_kickoffs(conn, cfg.league.season, week)
             sync_projections(conn, client, cfg.league.season, week, scoring)
@@ -86,7 +97,43 @@ def cmd_advise(args: argparse.Namespace) -> int:
                 sync_projections(conn, client, cfg.league.season, None, scoring)
 
         avail = compute_availability(conn, cfg.league.league_id, cfg.league.roster_id)
-        players = build_player_projections(conn, avail.my_players, cfg.league.season, week)
+        fits = {} if args.no_kalshi else fetch_market_fits(cfg.sources.kalshi_base)
+
+        players, blends = blended_projections(
+            conn,
+            avail.my_players,
+            cfg.league.season,
+            week,
+            scoring,
+            fits,
+            cfg.model.kalshi_max_shift,
+        )
+
+        matchup = find_opponent(conn, client, cfg.league.league_id, cfg.league.roster_id, week)
+        opponent_starters: list = []
+        sds = standard_deviations(players, blends)
+        if matchup.opponent_roster_id is not None:
+            opponent_ids = roster_players_for(
+                conn, cfg.league.league_id, matchup.opponent_roster_id
+            )
+            opponent_players, opponent_blends = blended_projections(
+                conn,
+                opponent_ids,
+                cfg.league.season,
+                week,
+                scoring,
+                fits,
+                cfg.model.kalshi_max_shift,
+            )
+            # We cannot know what they will actually start, so assume they play
+            # their best legal lineup. Assuming less would flatter our own odds.
+            from .engine.lineup import optimize_lineup
+
+            opponent_starters = optimize_lineup(
+                opponent_players, starting_slots(league["roster_positions"])
+            ).starters
+            sds.update(standard_deviations(opponent_players, opponent_blends))
+
         advisory = build_advisory(
             conn,
             avail.snapshot_id,
@@ -95,9 +142,15 @@ def cmd_advise(args: argparse.Namespace) -> int:
             league["roster_positions"],
             cfg.league.season,
             week,
+            opponent_starters=opponent_starters,
+            opponent_name=matchup.opponent_name,
+            sds=sds,
+            my_banked=matchup.my_banked,
+            opponent_banked=matchup.opponent_banked,
+            draws=cfg.model.sim_draws,
         )
 
-    print(render_advisory(advisory, team_name=league.get("name", "")))
+    print(render_advisory(advisory, team_name=league.get("name", ""), blends=blends))
     return 0
 
 
@@ -119,6 +172,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_advise.add_argument(
         "--ros", action="store_true", help="also refresh rest-of-season projections"
+    )
+    p_advise.add_argument(
+        "--no-kalshi", action="store_true", help="skip market data, use Sleeper projections only"
     )
     p_advise.set_defaults(func=cmd_advise)
 

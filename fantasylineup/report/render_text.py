@@ -22,7 +22,7 @@ def _player_line(slot: str, player, advisory: Advisory, width: int = 26) -> str:
     return f"  {slot:<5} {player.name:<{width}} {player.points:6.2f}  {opp:<7} {marker:>8}"
 
 
-def render_advisory(advisory: Advisory, team_name: str = "") -> str:
+def render_advisory(advisory: Advisory, team_name: str = "", blends: dict | None = None) -> str:
     lines: list[str] = []
     header = f"Week {advisory.week} lineup"
     if team_name:
@@ -34,6 +34,26 @@ def render_advisory(advisory: Advisory, team_name: str = "") -> str:
     if advisory.deadline is not None:
         countdown = format_countdown(advisory.deadline, advisory.generated_at)
         lines.append(f"next lock in {countdown} ({advisory.deadline:%a %H:%M UTC})")
+
+    if advisory.outcome is not None:
+        wp = advisory.outcome.win_probability
+        lines.append("")
+        lines.append(
+            f"vs {advisory.opponent_name}:  win probability {wp:6.1%}   "
+            f"({advisory.outcome.p10:.0f} - {advisory.outcome.p90:.0f} pts, 10th-90th)"
+        )
+        lines.append(f"  {advisory.posture}")
+        if advisory.winprob_swaps:
+            gain = wp - advisory.ev_outcome.win_probability
+            lines.append(
+                f"  {advisory.winprob_swaps} swap(s) away from the highest-points lineup, "
+                f"worth +{gain:.1%} win probability"
+            )
+        if advisory.my_banked or advisory.opponent_banked:
+            lines.append(
+                f"  banked so far: you {advisory.my_banked:.1f}, "
+                f"them {advisory.opponent_banked:.1f}"
+            )
     lines.append("")
 
     lines.append(f"OPTIMAL  {advisory.optimal.total_points:.2f} projected")
@@ -71,6 +91,28 @@ def render_advisory(advisory: Advisory, team_name: str = "") -> str:
                 f"  START {c.start.name} ({c.start.points:.2f}) at {c.slot}{sit}"
                 f"   [decide within {by}]"
             )
+
+    if blends:
+        covered = [b for b in blends.values() if b.has_market]
+        if covered:
+            lines.append("")
+            lines.append(
+                f"Market data informed {len(covered)} of {len(blends)} players "
+                f"(Kalshi prop ladders; no rushing-yards market exists, so running "
+                f"backs lean on Sleeper)."
+            )
+            names = {
+                p.sleeper_id: p.name
+                for p in [*advisory.optimal.assignments.values(), *advisory.optimal.bench]
+            }
+            for b in sorted(covered, key=lambda b: abs(b.shift), reverse=True)[:4]:
+                if abs(b.shift) < 0.05:
+                    continue
+                lines.append(
+                    f"    {names.get(b.sleeper_id, b.sleeper_id):<24} "
+                    f"{b.baseline:6.2f} -> {b.blended:6.2f} "
+                    f"({b.shift:+.2f}, coverage {b.coverage:.0%})"
+                )
 
     locked = advisory.locked_players
     if locked:

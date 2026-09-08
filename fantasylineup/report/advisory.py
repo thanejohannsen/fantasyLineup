@@ -3,8 +3,12 @@
 Deliberately expressed as a *delta* against the lineup currently set in Sleeper.
 Sleeper's API is read-only, so nothing here can be applied automatically -- the
 output has to be worth acting on by hand, which means saying plainly what to
-change and what it is worth, not just printing an optimal lineup and leaving
-the diff as an exercise.
+change and what it is worth, not just printing an optimal lineup and leaving the
+diff as an exercise.
+
+Where an opponent is known the recommendation optimises win probability rather
+than expected points, so the advice shifts toward the floor when ahead and the
+ceiling when behind.
 """
 
 from __future__ import annotations
@@ -15,6 +19,8 @@ from datetime import UTC, datetime
 
 from ..engine.lineup import Lineup, PlayerProjection, optimize_lineup, starting_slots
 from ..engine.locks import LockState, locked_slot_assignments, next_deadline, player_lock_states
+from ..engine.simulate import SimulatedOutcome
+from ..engine.winprob import optimize_for_win_probability, posture
 
 
 @dataclass(frozen=True)
@@ -35,6 +41,12 @@ class Advisory:
     generated_at: datetime
     lock_states: dict[str, LockState] = field(default_factory=dict)
     deadline: datetime | None = None
+    opponent_name: str | None = None
+    outcome: SimulatedOutcome | None = None
+    ev_outcome: SimulatedOutcome | None = None
+    winprob_swaps: int = 0
+    my_banked: float = 0.0
+    opponent_banked: float = 0.0
 
     @property
     def gain(self) -> float:
@@ -47,6 +59,12 @@ class Advisory:
             for p in self.current.assignments.values()
             if self.lock_states.get(p.sleeper_id, LockState(False, None)).locked
         ]
+
+    @property
+    def posture(self) -> str | None:
+        if self.outcome is None:
+            return None
+        return posture(self.outcome.win_probability)
 
 
 def current_lineup(
@@ -103,10 +121,7 @@ def diff_lineups(optimal: Lineup, current: Lineup, slots: list[str]) -> list[Lin
     for idx, slot in enumerate(slots):
         new = optimal.assignments.get(idx)
         old = current.assignments.get(idx)
-        if new is None:
-            continue
-        # Ignore pure reshuffles: the player was already starting somewhere.
-        if new.sleeper_id in current_ids:
+        if new is None or new.sleeper_id in current_ids:
             continue
         changes.append(
             LineupChange(
@@ -129,12 +144,19 @@ def build_advisory(
     season: int,
     week: int,
     now: datetime | None = None,
+    opponent_starters: list[PlayerProjection] | None = None,
+    opponent_name: str | None = None,
+    sds: dict[str, float] | None = None,
+    my_banked: float = 0.0,
+    opponent_banked: float = 0.0,
+    draws: int = 20000,
 ) -> Advisory:
     """Recommend a lineup, respecting what has already locked.
 
-    Starters whose games have kicked off are pinned in place and the remaining
-    slots optimised around them, so every change proposed is one that can still
-    actually be made in the app.
+    Starters whose games have kicked off are pinned and the remaining slots
+    optimised around them, so every change proposed is one that can still
+    actually be made in the app. With an opponent supplied the objective becomes
+    win probability; without one it stays expected points.
     """
     now = now or datetime.now(UTC)
     slots = starting_slots(roster_positions)
@@ -142,7 +164,28 @@ def build_advisory(
     lock_states = player_lock_states(conn, players, season, week, now=now)
     forced = locked_slot_assignments(conn, snapshot_id, roster_id, lock_states)
 
-    optimal = optimize_lineup(players, slots, forced=forced)
+    outcome = ev_outcome = None
+    swaps = 0
+    if opponent_starters and sds:
+        result = optimize_for_win_probability(
+            players=players,
+            slots=slots,
+            opponent_starters=opponent_starters,
+            sds=sds,
+            forced=forced,
+            draws=draws,
+            my_banked=my_banked,
+            opponent_banked=opponent_banked,
+        )
+        optimal, outcome, ev_outcome, swaps = (
+            result.lineup,
+            result.outcome,
+            result.ev_outcome,
+            result.swaps_applied,
+        )
+    else:
+        optimal = optimize_lineup(players, slots, forced=forced)
+
     current = current_lineup(conn, snapshot_id, roster_id, players, slots)
     return Advisory(
         week=week,
@@ -153,4 +196,10 @@ def build_advisory(
         generated_at=now,
         lock_states=lock_states,
         deadline=next_deadline(lock_states, now=now),
+        opponent_name=opponent_name,
+        outcome=outcome,
+        ev_outcome=ev_outcome,
+        winprob_swaps=swaps,
+        my_banked=my_banked,
+        opponent_banked=opponent_banked,
     )

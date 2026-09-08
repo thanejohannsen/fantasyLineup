@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS player_status_snapshots (
     news_updated     INTEGER,
     PRIMARY KEY (sleeper_id, observed_at)
 );
-CREATE INDEX IF NOT EXISTS idx_status_player ON player_status_snapshots(sleeper_id, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_status_player
+    ON player_status_snapshots(sleeper_id, observed_at DESC);
 
 -- League configuration, cached whole (scoring_settings, roster_positions).
 CREATE TABLE IF NOT EXISTS league_meta (
@@ -65,6 +66,16 @@ CREATE TABLE IF NOT EXISTS league_meta (
     name       TEXT,
     payload    TEXT NOT NULL,   -- full JSON as returned
     updated_at TEXT NOT NULL
+);
+
+-- League members, so reports can name an opponent rather than print an id.
+CREATE TABLE IF NOT EXISTS league_users (
+    league_id    TEXT NOT NULL,
+    user_id      TEXT NOT NULL,
+    display_name TEXT,
+    team_name    TEXT,
+    updated_at   TEXT NOT NULL,
+    PRIMARY KEY (league_id, user_id)
 );
 
 -- Roster snapshots. content_hash lets us skip writing unchanged states, so
@@ -99,7 +110,9 @@ CREATE TABLE IF NOT EXISTS games (
     home        TEXT,
     away        TEXT,
     status      TEXT,
-    kickoff_utc TEXT,             -- best-effort, from Kalshi; display only
+    -- Exact kickoff from ESPN's public scoreboard. Used both for the
+    -- countdown and, alongside status, to decide whether a slot has locked.
+    kickoff_utc TEXT,
     updated_at  TEXT NOT NULL,
     PRIMARY KEY (game_id, season)
 );
