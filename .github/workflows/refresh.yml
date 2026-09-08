@@ -1,0 +1,87 @@
+name: Refresh advisory
+
+# Hourly, with the decision about how much work to do made inside `fl refresh`
+# rather than encoded as six separate cron entries. Neither Sleeper nor Kalshi
+# needs authentication, so there are no secrets and nothing to rotate.
+#
+# Two scheduling caveats worth knowing. GitHub disables scheduled workflows
+# after 60 days of repository inactivity -- the commit this job makes each run
+# keeps it alive. And cron here can be delayed by several minutes under load, so
+# nothing downstream treats a run time as a deadline: every deadline is computed
+# from the schedule data itself.
+on:
+  schedule:
+    - cron: "7 * * * *"
+  workflow_dispatch:
+    inputs:
+      with_moves:
+        description: "Force the waiver and trade search"
+        type: boolean
+        default: false
+
+concurrency:
+  group: refresh
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      # The database is cache, not source of truth: everything in it can be
+      # rebuilt from the APIs. Restoring it just avoids re-downloading the
+      # 14MB player dump every hour.
+      - name: Restore data cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: fantasylineup-data-${{ github.run_id }}
+          restore-keys: fantasylineup-data-
+
+      - name: Refresh
+        run: |
+          fl refresh ${{ inputs.with_moves && '--with-moves' || '' }}
+
+      - name: Save data cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data
+          key: fantasylineup-data-${{ github.run_id }}
+
+      # Commit only when the page actually changed. Every run rewrites the
+      # "Updated ..." timestamp, so committing unconditionally would produce
+      # a commit an hour forever and bury real changes in noise.
+      - name: Publish if changed
+        run: |
+          git config user.name "fantasylineup-bot"
+          git config user.email "noreply@github.com"
+          if git diff --quiet -- docs/; then
+            echo "No change to the dashboard; nothing to commit."
+            exit 0
+          fi
+          # Ignore a diff that is only the timestamp line.
+          changed=$(git diff -U0 -- docs/ | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' \
+            | grep -vc 'class="sub"' || true)
+          if [ "$changed" -eq 0 ]; then
+            echo "Only the timestamp moved; skipping commit."
+            git checkout -- docs/
+            exit 0
+          fi
+          git add docs/
+          git commit -m "Refresh advisory dashboard"
+          git push

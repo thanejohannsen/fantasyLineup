@@ -168,3 +168,55 @@ def render_moves(targets, proposals, roster_limit: int, near_miss=None) -> str:
     lines.append("")
     lines.append(f"Roster limit {roster_limit}. Sleeper's API is read-only: execute these by hand.")
     return "\n".join(lines)
+
+
+def render_recap(recap) -> str:
+    """Week in review, oriented around what to learn rather than the score."""
+    r = recap
+    header = f"Week {r.week} recap"
+    if not r.played:
+        return "\n".join([
+            header,
+            "=" * len(header),
+            "",
+            f"Week {r.week} has not been played yet - no results to recap.",
+        ])
+
+    verdict = "WON" if r.won else "LOST"
+    lines = [
+        header,
+        "=" * len(header),
+        "",
+        f"{verdict}  {r.my_points:.1f} - {r.opponent_points:.1f}  vs {r.opponent_name}",
+        f"Points left on the bench: {r.points_left_on_bench:.1f}",
+        "",
+    ]
+
+    lines.append("STARTERS: projected vs actual")
+    for res in sorted((x for x in r.results if x.started), key=lambda x: -x.actual):
+        lines.append(
+            f"  {res.player.name:<24} {res.projected:6.1f} -> {res.actual:6.1f}  {res.miss:+6.1f}"
+        )
+
+    if r.notable_bench:
+        lines.append("")
+        lines.append("BENCH players who beat a starter")
+        for res in r.notable_bench:
+            lines.append(
+                f"  {res.player.name:<24} {res.projected:6.1f} -> {res.actual:6.1f}"
+            )
+        lines.append(
+            "  A bench player outscoring a starter is only a mistake if it was"
+        )
+        lines.append(
+            "  foreseeable. Check the projection, not the outcome."
+        )
+
+    lines.append("")
+    lines.append(
+        "Points left on the bench measures the perfect-hindsight lineup, which"
+    )
+    lines.append(
+        "nobody can set. It is a variance gauge, not a scorecard."
+    )
+    return "\n".join(lines)

@@ -22,7 +22,9 @@ from .pipeline import (
     standard_deviations,
 )
 from .report.advisory import build_advisory
-from .report.render_text import render_advisory, render_moves
+from .report.render_html import render_dashboard, render_moves_panel
+from .report.recap import build_recap, sync_actuals
+from .report.render_text import render_advisory, render_moves, render_recap
 from .sources.kickoffs import sync_kickoffs
 from .sources.sleeper import SleeperClient
 from .sync import (
@@ -155,6 +157,14 @@ def cmd_advise(args: argparse.Namespace) -> int:
         )
 
     print(render_advisory(advisory, team_name=league.get("name", ""), blends=blends))
+
+    if args.publish:
+        target = cfg.paths.site / "index.html"
+        target.write_text(
+            render_dashboard(advisory, league.get("name", "Fantasy"), moves_html=""),
+            encoding="utf-8",
+        )
+        print(f"\nDashboard written to {target}")
     return 0
 
 
@@ -212,6 +222,166 @@ def cmd_moves(args: argparse.Namespace) -> int:
     return 0
 
 
+def _next_kickoff_hours(conn, season: int, week: int) -> float | None:
+    """Hours until the next game that has not started, or None if all have."""
+    from datetime import UTC, datetime
+
+    now = datetime.now(UTC)
+    upcoming = []
+    for r in conn.execute(
+        "SELECT kickoff_utc, status FROM games WHERE season = ? AND week = ?", (season, week)
+    ):
+        if not r["kickoff_utc"] or (r["status"] and r["status"] != "pre"):
+            continue
+        try:
+            kickoff = datetime.fromisoformat(r["kickoff_utc"])
+        except ValueError:
+            continue
+        if kickoff.tzinfo is None:
+            kickoff = kickoff.replace(tzinfo=UTC)
+        if kickoff > now:
+            upcoming.append((kickoff - now).total_seconds() / 3600)
+    return min(upcoming) if upcoming else None
+
+
+def cmd_refresh(args: argparse.Namespace) -> int:
+    """One scheduled pass: sync, re-advise, and rewrite the dashboard.
+
+    Meant to be called hourly. The expensive part is the trade search, which
+    only runs when it is worth running -- there is no point re-searching trades
+    every hour when rosters move a few times a week.
+    """
+    from datetime import UTC, datetime
+
+    cfg = load_config(args.config)
+    cfg.paths.ensure()
+    now = datetime.now(UTC)
+
+    with open_db(cfg.paths.db) as conn, SleeperClient(
+        cfg.sources.sleeper_base,
+        cfg.paths.cache,
+        max_calls_per_min=cfg.sources.max_calls_per_min,
+    ) as client:
+        league = sync_league(conn, client, cfg.league.league_id)
+        scoring = league["scoring_settings"]
+        week = _resolve_week(client, args.week)
+
+        sync_users(conn, client, cfg.league.league_id)
+        sync_players(conn, client, ttl_hours=cfg.sources.players_dump_ttl_hours)
+        sync_rosters(conn, client, cfg.league.league_id)
+        sync_schedule(conn, client, cfg.league.season)
+        sync_kickoffs(conn, cfg.league.season, week)
+        sync_projections(conn, client, cfg.league.season, week, scoring)
+
+        hours = _next_kickoff_hours(conn, cfg.league.season, week)
+        # Trades and waivers are rest-of-season decisions that do not change
+        # hour to hour. Refresh them well before the slate, not during it.
+        want_moves = args.with_moves or (hours is not None and hours > 24)
+        if want_moves:
+            sync_projections(conn, client, cfg.league.season, None, scoring)
+
+        fits = {} if args.no_kalshi else fetch_market_fits(cfg.sources.kalshi_base)
+        avail = compute_availability(conn, cfg.league.league_id, cfg.league.roster_id)
+        players, blends = blended_projections(
+            conn, avail.my_players, cfg.league.season, week, scoring, fits,
+            cfg.model.kalshi_max_shift,
+        )
+
+        matchup = find_opponent(conn, client, cfg.league.league_id, cfg.league.roster_id, week)
+        sds = standard_deviations(players, blends)
+        opponent_starters: list = []
+        if matchup.opponent_roster_id is not None:
+            opp_ids = roster_players_for(conn, cfg.league.league_id, matchup.opponent_roster_id)
+            opp_players, opp_blends = blended_projections(
+                conn, opp_ids, cfg.league.season, week, scoring, fits, cfg.model.kalshi_max_shift
+            )
+            from .engine.lineup import optimize_lineup
+
+            opponent_starters = optimize_lineup(
+                opp_players, starting_slots(league["roster_positions"])
+            ).starters
+            sds.update(standard_deviations(opp_players, opp_blends))
+
+        advisory = build_advisory(
+            conn, avail.snapshot_id, cfg.league.roster_id, players,
+            league["roster_positions"], cfg.league.season, week,
+            opponent_starters=opponent_starters, opponent_name=matchup.opponent_name,
+            sds=sds, my_banked=matchup.my_banked, opponent_banked=matchup.opponent_banked,
+            draws=cfg.model.sim_draws, now=now,
+        )
+
+        moves_html = ""
+        if want_moves:
+            slots = starting_slots(league["roster_positions"])
+            roster_limit = len([s for s in league["roster_positions"] if s != "IR"])
+            ros = REST_OF_SEASON
+
+            def build(ids):
+                return blended_projections(
+                    conn, ids, cfg.league.season, ros, scoring, fits, cfg.model.kalshi_max_shift
+                )[0]
+
+            my_ros = build(avail.my_players)
+            pool = shortlist_candidates(
+                conn, avail.free_agents, latest_projections(conn, cfg.league.season, ros)
+            )
+            targets = rank_waiver_targets(
+                my_ros, build(pool), slots, roster_limit=roster_limit, limit=5
+            )
+            rosters = {
+                rid: build(ids) for rid, ids in all_rosters(conn, cfg.league.league_id).items()
+            }
+            proposals = best_trades_across_league(
+                my_ros, rosters, roster_names(conn, cfg.league.league_id), slots,
+                cfg.league.roster_id, limit=4,
+            )
+            moves_html = render_moves_panel(targets, proposals)
+
+    target = cfg.paths.site / "index.html"
+    target.write_text(
+        render_dashboard(advisory, league.get("name", "Fantasy"), moves_html=moves_html),
+        encoding="utf-8",
+    )
+    print(f"Dashboard written to {target}")
+    print(f"Week {week} vs {matchup.opponent_name}; moves refreshed: {want_moves}")
+    return 0
+
+
+def cmd_recap(args: argparse.Namespace) -> int:
+    """What happened last week, and which calls were genuinely wrong."""
+    cfg = load_config(args.config)
+    cfg.paths.ensure()
+
+    with open_db(cfg.paths.db) as conn, SleeperClient(
+        cfg.sources.sleeper_base,
+        cfg.paths.cache,
+        max_calls_per_min=cfg.sources.max_calls_per_min,
+    ) as client:
+        league = load_league(conn, cfg.league.league_id)
+        scoring = league["scoring_settings"]
+        week = args.week if args.week is not None else max(1, _resolve_week(client, None) - 1)
+
+        sync_actuals(conn, client, cfg.league.season, week, scoring)
+        avail = compute_availability(conn, cfg.league.league_id, cfg.league.roster_id)
+
+        # Projections are read back at the timestamp they were stored, never
+        # recomputed: grading a past week with today's data would leak hindsight
+        # and make the measured accuracy meaningless.
+        players, _ = blended_projections(
+            conn, avail.my_players, cfg.league.season, week, scoring, {}, 0.0
+        )
+        matchup = find_opponent(conn, client, cfg.league.league_id, cfg.league.roster_id, week)
+        recap = build_recap(
+            conn, avail.snapshot_id, cfg.league.roster_id, players,
+            league["roster_positions"], cfg.league.season, week,
+            my_points=matchup.my_banked, opponent_points=matchup.opponent_banked,
+            opponent_name=matchup.opponent_name,
+        )
+
+    print(render_recap(recap))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="fl", description="Lock-aware Sleeper lineup, waiver and trade advisor"
@@ -234,6 +404,9 @@ def main(argv: list[str] | None = None) -> int:
     p_advise.add_argument(
         "--no-kalshi", action="store_true", help="skip market data, use Sleeper projections only"
     )
+    p_advise.add_argument(
+        "--publish", action="store_true", help="also write the GitHub Pages dashboard"
+    )
     p_advise.set_defaults(func=cmd_advise)
 
     p_moves = sub.add_parser("moves", help="waiver targets and trade offers")
@@ -241,6 +414,16 @@ def main(argv: list[str] | None = None) -> int:
     p_moves.add_argument("--no-refresh", action="store_true")
     p_moves.add_argument("--no-kalshi", action="store_true")
     p_moves.set_defaults(func=cmd_moves)
+
+    p_refresh = sub.add_parser("refresh", help="scheduled pass: sync, advise, publish dashboard")
+    p_refresh.add_argument("-w", "--week", type=int, default=None)
+    p_refresh.add_argument("--with-moves", action="store_true", help="force the trade search")
+    p_refresh.add_argument("--no-kalshi", action="store_true")
+    p_refresh.set_defaults(func=cmd_refresh)
+
+    p_recap = sub.add_parser("recap", help="last week's results and what to learn")
+    p_recap.add_argument("-w", "--week", type=int, default=None)
+    p_recap.set_defaults(func=cmd_recap)
 
     args = parser.parse_args(argv)
     _setup_logging(args.verbose)
