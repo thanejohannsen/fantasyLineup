@@ -34,6 +34,7 @@ import textwrap
 from dataclasses import dataclass
 from itertools import combinations
 
+from ..model.health import HealthStatus, Regime, is_structural
 from .lineup import PlayerProjection, lineup_value, optimize_lineup
 
 
@@ -115,7 +116,18 @@ def find_trades(
     }
 
     def packages(roster: list[PlayerProjection]) -> list[tuple[PlayerProjection, ...]]:
-        pool = [p for p in roster if p.sleeper_id not in untouchable and p.points > 0]
+        # Season-ending injuries are excluded explicitly, in both directions: a
+        # player with no remaining value must not be sold as though he had any,
+        # and must not be acquired as though he had any either. The rest-of-season
+        # haircut already zeroes them, but relying on that would break silently
+        # the moment the multiplier stopped being exactly zero.
+        pool = [
+            p
+            for p in roster
+            if p.sleeper_id not in untouchable
+            and p.points > 0
+            and p.health_regime != Regime.OUT_LONG.value
+        ]
         out: list[tuple[PlayerProjection, ...]] = [(p,) for p in pool]
         if max_package >= 2:
             out.extend(combinations(pool, 2))
@@ -212,6 +224,7 @@ class TradeRationale:
     why: str
     their_angle: str
     pitch: str
+    disclosures: tuple[str, ...] = ()
 
 
 def _profile(roster: list[PlayerProjection], slots: list[str]) -> tuple[dict, set[str]]:
@@ -226,6 +239,18 @@ def _profile(roster: list[PlayerProjection], slots: list[str]) -> tuple[dict, se
 
 def lineup_optimal(roster: list[PlayerProjection], slots: list[str]):
     return optimize_lineup(roster, slots)
+
+
+def _health_of(player: PlayerProjection) -> HealthStatus:
+    """Health status from the fields the pipeline attached to a projection."""
+    regime = Regime(player.health_regime) if player.health_regime else Regime.HEALTHY
+    return HealthStatus(
+        regime=regime,
+        status=player.injury_status,
+        body_part=player.injury_body_part,
+        notes=player.injury_notes,
+        structural=is_structural(player.injury_body_part, player.injury_notes),
+    )
 
 
 def _names(players: tuple[PlayerProjection, ...]) -> str:
@@ -412,9 +437,24 @@ def explain_trade(
     elif receiving_starter:
         lines.append(f"{get_names} fills a hole for me.")
 
+    # Any injury on either side is stated before the closing line. Selling an
+    # injured player is legitimate; making an affirmative case for him while
+    # omitting a known surgery is not, and the recipient can see the designation
+    # in his own app anyway -- so omitting it buys nothing and costs the
+    # credibility every future offer depends on.
+    disclosures = tuple(
+        _health_of(player).sentence(player.name)
+        for player in (*proposal.give, *proposal.get)
+        if _health_of(player).has_designation
+    )
+    if disclosures:
+        lines[-1:-1] = list(disclosures)
+
     # Wrapped so it pastes into a messaging app without reflowing into one line.
     pitch = "\n\n".join("\n".join(textwrap.wrap(line, 72)) for line in lines)
-    return TradeRationale(why=why, their_angle=their_angle, pitch=pitch)
+    return TradeRationale(
+        why=why, their_angle=their_angle, pitch=pitch, disclosures=disclosures
+    )
 
 
 @dataclass(frozen=True)

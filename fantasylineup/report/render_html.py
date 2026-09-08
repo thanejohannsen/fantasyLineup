@@ -93,6 +93,11 @@ td.slot, th.slot { width: 3.4rem; }
   text-transform: uppercase; font-weight: 600;
 }
 .conflict { color: var(--warn); font-size: .82rem; margin: .45rem 0 0; }
+.injury {
+  color: var(--warn); font-size: .7rem; letter-spacing: .03em;
+  border: 1px solid var(--warn); border-radius: 4px; padding: 0 .28rem;
+  white-space: nowrap;
+}
 .feed { margin: 0; padding-left: 1.1rem; font-size: .86rem; }
 .feed li { margin-bottom: .25rem; }
 .feed li.mine { color: var(--accent); font-weight: 600; }
@@ -144,6 +149,17 @@ def _esc(text: object) -> str:
     return html.escape(str(text))
 
 
+def _injury_html(player) -> str:
+    """Designation badge, in the warning colour, beside a player's name."""
+    status = getattr(player, "injury_status", None)
+    if not status:
+        return ""
+    initial = {"Questionable": "Q", "Doubtful": "D", "Out": "OUT"}.get(status, status)
+    part = getattr(player, "injury_body_part", None)
+    label = f"{initial} - {part}" if part and part != "Undisclosed" else initial
+    return f' <span class="injury">{_esc(label)}</span>'
+
+
 def render_dashboard(advisory: Advisory, team_name: str, moves_html: str = "") -> str:
     a = advisory
     generated = a.generated_at.strftime("%a %d %b %Y, %H:%M UTC")
@@ -177,7 +193,8 @@ def render_dashboard(advisory: Advisory, team_name: str, moves_html: str = "") -
         )
         rows.append(
             f"<tr{cls}><td class=\"slot\">{_esc(slot)}</td>"
-            f"<td>{_esc(player.name)} <span class=\"slot\">{opp}</span></td>"
+            f"<td>{_esc(player.name)}{_injury_html(player)} "
+            f"<span class=\"slot\">{opp}</span></td>"
             f'<td class="num">{player.points:.1f}</td>'
             f'<td class="when"{stamp}>{_esc(when)}</td></tr>'
         )

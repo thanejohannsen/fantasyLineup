@@ -197,14 +197,33 @@ def cmd_moves(args: argparse.Namespace) -> int:
             # Rest-of-season is the right horizon: a trade changes the roster
             # for the remainder of the season, not for one matchup.
             sync_projections(conn, client, cfg.league.season, None, scoring)
+            # The weekly slate is also needed, not for valuation but because
+            # whether a player has a weekly projection is what tells the health
+            # model he is playing rather than out for the season.
+            sync_projections(
+                conn, client, cfg.league.season, _resolve_week(client, None), scoring
+            )
 
         fits = {} if args.no_kalshi else fetch_market_fits(cfg.sources.kalshi_base)
         avail = compute_availability(conn, cfg.league.league_id, cfg.league.roster_id)
         ros = REST_OF_SEASON
 
+        # weekly_week tells the health model whether a player is actually
+        # playing, which is what separates "back from surgery" from "done for
+        # the year". Without it every injured player would look identical.
+        current_week = _resolve_week(client, None)
+
         def build(ids):
             return blended_projections(
-                conn, ids, cfg.league.season, ros, scoring, fits, cfg.model.kalshi_max_shift
+                conn,
+                ids,
+                cfg.league.season,
+                ros,
+                scoring,
+                fits,
+                cfg.model.kalshi_max_shift,
+                health_multipliers=cfg.health.as_table(),
+                weekly_week=current_week,
             )[0]
 
         my_players = build(avail.my_players)
@@ -244,7 +263,7 @@ def cmd_moves(args: argparse.Namespace) -> int:
         }
 
         activity = league_activity(
-            conn, client, cfg.league.league_id, _resolve_week(client, None), cfg.league.roster_id
+            conn, client, cfg.league.league_id, current_week, cfg.league.roster_id
         )
 
     print(render_moves(targets, proposals, roster_limit, near_miss, rationales, activity))
@@ -347,7 +366,15 @@ def cmd_refresh(args: argparse.Namespace) -> int:
 
             def build(ids):
                 return blended_projections(
-                    conn, ids, cfg.league.season, ros, scoring, fits, cfg.model.kalshi_max_shift
+                    conn,
+                    ids,
+                    cfg.league.season,
+                    ros,
+                    scoring,
+                    fits,
+                    cfg.model.kalshi_max_shift,
+                    health_multipliers=cfg.health.as_table(),
+                    weekly_week=week,
                 )[0]
 
             my_ros = build(avail.my_players)

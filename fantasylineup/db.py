@@ -41,6 +41,11 @@ CREATE TABLE IF NOT EXISTS players (
     years_exp         INTEGER,
     depth_chart_order INTEGER,
     search_rank       INTEGER,
+    -- Current injury state. Also appended to player_status_snapshots, but that
+    -- is a change log; consumers need the latest value on a plain join.
+    injury_status     TEXT,
+    injury_body_part  TEXT,
+    injury_notes      TEXT,
     updated_at        TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_players_kalshi ON players(kalshi_id);

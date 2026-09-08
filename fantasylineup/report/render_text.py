@@ -5,9 +5,22 @@ from __future__ import annotations
 import textwrap
 
 from ..engine.locks import LockState, format_countdown
+from ..model.health import Regime, is_structural
 from .advisory import Advisory
 
 _UNKNOWN = LockState(locked=False, kickoff_utc=None)
+
+
+def _injury_tag(player) -> str:
+    """Compact designation for a roster line, e.g. ``[Q - Achilles]``."""
+    status = getattr(player, "injury_status", None)
+    if not status:
+        return ""
+    initial = {"Questionable": "Q", "Doubtful": "D", "Out": "OUT"}.get(status, status)
+    part = getattr(player, "injury_body_part", None)
+    if part and part != "Undisclosed":
+        return f"[{initial} - {part}]"
+    return f"[{initial}]"
 
 
 def _wrap(text: str, width: int, indent: int) -> str:
@@ -27,7 +40,9 @@ def _player_line(slot: str, player, advisory: Advisory, width: int = 26) -> str:
     else:
         marker = format_countdown(state.kickoff_utc, advisory.generated_at)
     opp = f"vs {player.opponent}" if player.opponent else ""
-    return f"  {slot:<5} {player.name:<{width}} {player.points:6.2f}  {opp:<7} {marker:>8}"
+    tag = _injury_tag(player)
+    name = f"{player.name} {tag}".strip() if tag else player.name
+    return f"  {slot:<5} {name:<{width}} {player.points:6.2f}  {opp:<7} {marker:>8}"
 
 
 def render_advisory(advisory: Advisory, team_name: str = "", blends: dict | None = None) -> str:
@@ -74,7 +89,9 @@ def render_advisory(advisory: Advisory, team_name: str = "", blends: dict | None
         for p in advisory.optimal.bench:
             state = advisory.lock_states.get(p.sleeper_id, _UNKNOWN)
             marker = "LOCKED" if state.locked else ""
-            lines.append(f"        {p.name:<26} {p.points:6.2f}          {marker:>8}")
+            tag = _injury_tag(p)
+            name = f"{p.name} {tag}".strip() if tag else p.name
+            lines.append(f"        {name:<26} {p.points:6.2f}          {marker:>8}")
 
     lines.append("")
     if advisory.optimal.unfilled:
@@ -154,9 +171,10 @@ def render_moves(
                 lines.append(f"    closest: {c.name} ({c.position}, {c.points:.0f} ROS)")
     for t in targets:
         drop = f"  drop {t.drop.name} ({t.drop.points:.1f})" if t.drop else ""
+        tag = _injury_tag(t.player)
         lines.append(
-            f"  +{t.gain:5.1f}  ADD {t.player.name} "
-            f"({t.player.position}, {t.player.points:.1f} ROS){drop}"
+            f"  +{t.gain:5.1f}  ADD {t.player.name} {tag}".rstrip()
+            + f" ({t.player.position}, {t.player.points:.1f} ROS){drop}"
         )
 
     lines.append("")
@@ -174,8 +192,14 @@ def render_moves(
     for r in ranked:
         p = r.proposal
         i = list(proposals).index(p)
-        give = ", ".join(f"{x.name} ({x.points:.1f})" for x in p.give)
-        get = ", ".join(f"{x.name} ({x.points:.1f})" for x in p.get)
+        give = ", ".join(
+            f"{x.name}{' ' + _injury_tag(x) if _injury_tag(x) else ''} ({x.points:.1f})"
+            for x in p.give
+        )
+        get = ", ".join(
+            f"{x.name}{' ' + _injury_tag(x) if _injury_tag(x) else ''} ({x.points:.1f})"
+            for x in p.get
+        )
         lines.append("")
         flag = "SEND THIS ONE" if r.rank == 1 else ""
         lines.append(f"  #{r.rank}  {p.partner_name}  [{p.shape}]  {flag}")

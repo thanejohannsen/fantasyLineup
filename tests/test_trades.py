@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from fantasylineup.engine.trades import find_trades
+from fantasylineup.engine.trades import TradeProposal, find_trades
 from fantasylineup.engine.waivers import rank_waiver_targets
 from tests.test_lineup import p
 
@@ -650,3 +650,86 @@ def test_displacement_falls_back_when_no_lineup_is_set():
     rationale = explain_trade(proposal, my_roster, their_roster, ZOO_SLOTS, their_starters=[])
     assert rationale.pitch
     assert "George Kittle" in " ".join(rationale.pitch.split())
+
+
+def _injured(pid, pos, pts, regime, status="Questionable", part="Knee - ACL", notes="Surgery"):
+    from fantasylineup.engine.lineup import PlayerProjection
+
+    return PlayerProjection(
+        sleeper_id=pid,
+        name=pid,
+        position=pos,
+        points=pts,
+        fantasy_positions=frozenset({pos}),
+        injury_status=status,
+        injury_body_part=part,
+        injury_notes=notes,
+        health_regime=regime,
+    )
+
+
+def test_season_ending_injuries_are_never_traded():
+    """Neither sold nor acquired.
+
+    A player with no remaining value must not be offered as though he had any,
+    and must not be taken back as though he had any either. The rest-of-season
+    haircut already zeroes him, but gating explicitly means this keeps holding
+    if the multiplier ever stops being exactly zero.
+    """
+    mine = [
+        p("qb", "QB", 300.0),
+        p("rb1", "RB", 250.0),
+        p("rb2", "RB", 200.0),
+        p("rb3", "RB", 190.0),
+        p("rb4", "RB", 180.0),
+        p("rb5", "RB", 170.0),
+        _injured("my_wreck", "WR", 160.0, "out_long"),
+        p("wr_bad", "WR", 40.0),
+        p("te", "TE", 120.0),
+    ]
+    theirs = [
+        p("tqb", "QB", 300.0),
+        p("twr1", "WR", 240.0),
+        p("twr2", "WR", 230.0),
+        p("twr3", "WR", 220.0),
+        p("twr4", "WR", 210.0),
+        p("twr5", "WR", 200.0),
+        _injured("their_wreck", "RB", 200.0, "out_long"),
+        p("trb_bad", "RB", 30.0),
+        p("tte", "TE", 120.0),
+    ]
+    proposals = find_trades(mine, theirs, SLOTS, 7, "them")
+    assert proposals, "healthy complementary trades should still be found"
+    for proposal in proposals:
+        names = {x.sleeper_id for x in (*proposal.give, *proposal.get)}
+        assert "my_wreck" not in names
+        assert "their_wreck" not in names
+
+
+def test_playing_injured_player_is_still_tradeable_with_disclosure():
+    """Selling a diminished-but-playing asset is legitimate; hiding it is not."""
+    from fantasylineup.engine.trades import explain_trade
+
+    kittle = _injured("George Kittle", "TE", 152.4, "playing_diminished", part="Achilles")
+    mine = [kittle, p("Trey McBride", "TE", 235.0), p("Bijan", "RB", 325.0)]
+    theirs = [p("Derrick Henry", "RB", 246.9), p("Their TE", "TE", 80.0)]
+
+    proposal = TradeProposal(2, "Unc Show", (kittle,), (theirs[0],), 24.0, 5.6)
+    rationale = explain_trade(proposal, mine, theirs, SLOTS)
+
+    flat = " ".join(rationale.pitch.split())
+    assert rationale.disclosures, "an injured player in the deal must be disclosed"
+    assert "George Kittle" in flat
+    assert "achilles" in flat.lower()
+    assert "Questionable" in flat
+
+
+def test_healthy_deal_carries_no_disclosure_noise():
+    from fantasylineup.engine.trades import explain_trade
+
+    mine = [p("a1", "RB", 200.0), p("a2", "TE", 150.0)]
+    theirs = [p("b1", "WR", 210.0)]
+    proposal = TradeProposal(3, "them", (mine[1],), (theirs[0],), 8.0, 2.0)
+    rationale = explain_trade(proposal, mine, theirs, SLOTS)
+    assert rationale.disclosures == ()
+    assert "Heads up" not in rationale.pitch

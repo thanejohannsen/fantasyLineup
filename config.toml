@@ -27,3 +27,19 @@ status_ttl_minutes = 30
 kalshi_max_shift = 0.25
 # Monte Carlo draws for win-probability evaluation.
 sim_draws = 20000
+
+[health]
+# Rest-of-season multipliers by injury regime. Weekly projections need no
+# haircut -- Sleeper already omits players who are not playing.
+#
+# These are literature-informed judgment, not fitted values. Achilles ruptures
+# return at a mean of 10.9 months and ACL reconstructions at 13.6, both beyond
+# any remaining schedule, which is why out_long is zero rather than discounted.
+# playing_diminished_structural is the weakest number here: decline in the first
+# season back is documented, but Sleeper may already price some of it, so it is
+# deliberately small. It is the first thing `fl calibrate` should measure.
+healthy = 1.00
+playing_diminished_structural = 0.90
+playing_diminished_soft = 1.00
+out_short = 0.40
+out_long = 0.00

@@ -19,6 +19,7 @@ sources. There is no name matching anywhere in this project.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Iterator
 
@@ -66,8 +67,14 @@ class MarketQuote:
 
 
 class KalshiClient:
-    def __init__(self, base_url: str, timeout: float = 45.0) -> None:
+    def __init__(
+        self, base_url: str, timeout: float = 45.0, pause_seconds: float = 0.35
+    ) -> None:
         self.base_url = base_url.rstrip("/")
+        # Kalshi returns 429 when four 1000-market series are pulled
+        # back-to-back. A short pause between pages is cheaper than the retry,
+        # and a full sweep is only a handful of requests either way.
+        self.pause_seconds = pause_seconds
         self._client = httpx.Client(
             timeout=timeout,
             follow_redirects=True,
@@ -93,6 +100,12 @@ class KalshiClient:
             if cursor:
                 params["cursor"] = cursor
             resp = self._client.get(f"{self.base_url}/markets", params=params)
+            if resp.status_code == 429:
+                # One polite retry; beyond that the caller degrades to
+                # Sleeper-only rather than hammering.
+                log.info("Kalshi rate limited on %s, backing off", series_ticker)
+                time.sleep(2.0)
+                resp = self._client.get(f"{self.base_url}/markets", params=params)
             resp.raise_for_status()
             payload = resp.json()
             batch = payload.get("markets") or []
@@ -101,6 +114,8 @@ class KalshiClient:
             # Kalshi returns the same cursor with an empty page at the end.
             if not cursor or not batch:
                 return
+            if self.pause_seconds:
+                time.sleep(self.pause_seconds)
 
     def player_quotes(self) -> list[MarketQuote]:
         out: list[MarketQuote] = []
@@ -110,6 +125,8 @@ class KalshiClient:
             except httpx.HTTPError as exc:
                 log.warning("Kalshi series %s unavailable: %s", series, exc)
                 continue
+            if self.pause_seconds:
+                time.sleep(self.pause_seconds)
             for m in markets:
                 quote = _to_quote(m, series, stat)
                 if quote is not None:

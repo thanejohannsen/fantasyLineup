@@ -60,6 +60,13 @@ class PlayerProjection:
     locked: bool = False
     team: str | None = None
     opponent: str | None = None
+    injury_status: str | None = None
+    injury_body_part: str | None = None
+    injury_notes: str | None = None
+    # Injury regime, set once by the pipeline. Carried explicitly rather than
+    # re-derived downstream: inferring "out for the season" from a zeroed score
+    # would silently break the moment a multiplier stopped being exactly zero.
+    health_regime: str | None = None
 
     def eligible_for(self, slot: str) -> bool:
         allowed = SLOT_ELIGIBILITY.get(slot)

@@ -35,6 +35,11 @@ hand in the app.
   claim is derived from roster state both managers can already see — a message
   that misstates a roster the other person can check in ten seconds is worse
   than no message, and it poisons the next offer too.
+- **Prices and discloses injuries.** Season-ending injuries are zeroed and
+  excluded from trades in both directions; players back from surgery are
+  discounted rather than written off; and any injured player in a proposal is
+  named in the message, because the other manager sees the designation in his own
+  app regardless.
 - **Publishes a dashboard** to GitHub Pages, refreshed hourly by Actions.
 
 ## Quick start
@@ -111,6 +116,48 @@ data. Until then the capped, Sleeper-anchored blend is a deliberately
 conservative default, not a measured improvement.
 
 Measured on 2025: Sleeper MAE 4.06 points, bias -0.02 over 6,809 observations.
+
+## Injuries
+
+The discriminator is **availability, not severity**, and it comes from the data.
+Sleeper's *weekly* projections already price injury -- a player who is not
+playing simply has no weekly record -- but its *rest-of-season* projections do
+not. Sampled live, Michael Penix carried 143.2 rest-of-season points while out
+for the year with a reconstructed ACL, and Tyreek Hill 93.7, while George Kittle,
+who is actually playing after Achilles surgery, carried 169.3 -- a number that
+already reflects his reduced role.
+
+So the split is on whether a current-week projection exists:
+
+| Regime | Meaning | ROS multiplier |
+| --- | --- | --- |
+| `HEALTHY` | no designation | 1.00 |
+| `PLAYING_DIMINISHED`, structural | back from surgery, on the field | 0.90 |
+| `PLAYING_DIMINISHED`, soft tissue | knock, still playing | 1.00 |
+| `OUT_SHORT` | not playing, week to week | 0.40 |
+| `OUT_LONG` | not playing, recovery outruns the season | 0.00 |
+
+`injury_status` is never used alone. `injury_start_date` is 0 of 782 populated
+upstream, so it carries no timing signal, and "Questionable" skews heavily toward
+stars -- median ROS 95.3 against 38.7 for players with no designation, because
+good players get reported. Haircutting the tag itself would dock Puka Nacua and
+Ja'Marr Chase for undisclosed knocks while missing the players who are actually
+gone.
+
+Timelines come from published NFL cohort studies, not guesswork: Achilles
+ruptures return 66.2% of players at a mean of
+[10.9 months](https://pmc.ncbi.nlm.nih.gov/articles/PMC11682601/), ACL
+reconstructions 61.8% at
+[13.6 months](https://pubmed.ncbi.nlm.nih.gov/33553449/). Both exceed any
+remaining schedule, which is why `OUT_LONG` is zero rather than merely
+discounted. Decline after return is real but
+[concentrated in the first season back](https://pubmed.ncbi.nlm.nih.gov/33218267/),
+which is where a currently-playing post-surgery player sits by construction.
+
+**The multipliers are literature-informed judgment, not fitted values.**
+`playing_diminished_structural` is the weakest: Sleeper may already price some of
+that decline, so the number is deliberately small and lives in `config.toml`.
+It is the first thing `fl calibrate` should measure once weeks accumulate.
 
 ## Does it notice completed trades?
 

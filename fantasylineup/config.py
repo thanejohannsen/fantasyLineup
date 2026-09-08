@@ -50,11 +50,32 @@ class ModelConfig:
 
 
 @dataclass(frozen=True)
+class HealthConfig:
+    """Rest-of-season multipliers per injury regime."""
+
+    healthy: float = 1.00
+    playing_diminished_structural: float = 0.90
+    playing_diminished_soft: float = 1.00
+    out_short: float = 0.40
+    out_long: float = 0.00
+
+    def as_table(self) -> dict[str, float]:
+        return {
+            "healthy": self.healthy,
+            "playing_diminished_structural": self.playing_diminished_structural,
+            "playing_diminished_soft": self.playing_diminished_soft,
+            "out_short": self.out_short,
+            "out_long": self.out_long,
+        }
+
+
+@dataclass(frozen=True)
 class Config:
     league: LeagueConfig
     paths: PathsConfig
     sources: SourcesConfig
     model: ModelConfig
+    health: HealthConfig
     root: Path
 
 
@@ -80,5 +101,6 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         paths=paths,
         sources=SourcesConfig(**raw["sources"]),
         model=ModelConfig(**raw["model"]),
+        health=HealthConfig(**raw.get("health", {})),
         root=root,
     )

@@ -15,7 +15,8 @@ from typing import Any, Mapping
 from .engine.lineup import PlayerProjection, starting_slots
 from .engine.locks import locked_slot_assignments, player_lock_states
 from .model.blend import BlendResult, blend_player, fit_ladders, group_quotes
-from .model.projections import latest_projections
+from .model.health import HealthStatus, Regime, classify, is_structural, ros_multiplier
+from .model.projections import REST_OF_SEASON, latest_projections
 from .model.variance import VarianceModel, default_model
 from .sources.kalshi import KalshiClient
 from .sources.sleeper import SleeperClient
@@ -87,15 +88,51 @@ def blended_projections(
     scoring_settings: Mapping[str, float],
     kalshi_fits: Mapping[tuple[str, str], Any],
     max_shift: float,
+    health_multipliers: Mapping[str, float] | None = None,
+    weekly_week: int | None = None,
 ) -> tuple[list[PlayerProjection], dict[str, BlendResult]]:
-    """Build optimizer inputs with Kalshi folded into the Sleeper baseline."""
+    """Build optimizer inputs with Kalshi folded into the Sleeper baseline.
+
+    Injury haircuts are applied here because this is the single choke point
+    every command shares, so no caller can accidentally reason about a
+    season-ending injury as though the player were available.
+
+    They apply to rest-of-season projections only. Weekly projections need no
+    haircut: Sleeper simply omits a player who is not playing, so an unavailable
+    player already arrives at zero. Rest-of-season numbers carry no such
+    treatment -- one quarterback was priced at 143 points while out for the year
+    with a reconstructed ACL.
+    """
     if not player_ids:
         return [], {}
 
     projections = latest_projections(conn, season, week)
+    # Whether a *weekly* projection exists is what separates "back from last
+    # year's surgery and playing" from "had that surgery three weeks ago".
+    is_ros = week == REST_OF_SEASON
+    weekly = (
+        latest_projections(conn, season, weekly_week)
+        if is_ros and weekly_week is not None
+        else projections
+    )
+
+    # An empty weekly table means the data was never fetched, not that every
+    # injured player in the league is finished for the year. Without this guard
+    # a missing sync silently zeroes every player carrying a designation and
+    # quietly drops them from trades -- destructive, and invisible.
+    weekly_known = bool(weekly)
+    if is_ros and not weekly_known:
+        log.warning(
+            "No week %s projections stored; treating injury designations as "
+            "playing rather than out. Run a weekly projection sync for accurate "
+            "injury handling.",
+            weekly_week,
+        )
+
     placeholders = ",".join("?" * len(player_ids))
     rows = conn.execute(
-        f"""SELECT sleeper_id, full_name, position, fantasy_positions, team, kalshi_id
+        f"""SELECT sleeper_id, full_name, position, fantasy_positions, team, kalshi_id,
+                   injury_status, injury_body_part, injury_notes
             FROM players WHERE sleeper_id IN ({placeholders})""",
         list(player_ids),
     ).fetchall()
@@ -115,6 +152,17 @@ def blended_projections(
         blend = blend_player(r["sleeper_id"], stats, fits, scoring_settings, max_shift)
         blends[r["sleeper_id"]] = blend
 
+        health = classify(
+            r["injury_status"],
+            r["injury_body_part"],
+            r["injury_notes"],
+            # Absent weekly data is unknown, not "out": assume playing.
+            has_weekly_projection=(r["sleeper_id"] in weekly) or not weekly_known,
+        )
+        points = blend.blended
+        if is_ros:
+            points *= ros_multiplier(health, health_multipliers)
+
         import json as _json
 
         positions = frozenset(_json.loads(r["fantasy_positions"] or "[]"))
@@ -123,13 +171,29 @@ def blended_projections(
                 sleeper_id=r["sleeper_id"],
                 name=r["full_name"],
                 position=r["position"],
-                points=blend.blended,
+                points=points,
                 fantasy_positions=positions or frozenset({r["position"]}),
                 team=r["team"],
                 opponent=proj.get("opponent"),
+                injury_status=r["injury_status"],
+                injury_body_part=r["injury_body_part"],
+                injury_notes=r["injury_notes"],
+                health_regime=health.regime.value,
             )
         )
     return players, blends
+
+
+def health_of(player: PlayerProjection) -> HealthStatus:
+    """The health status carried on a projection, without re-deriving it."""
+    regime = Regime(player.health_regime) if player.health_regime else Regime.HEALTHY
+    return HealthStatus(
+        regime=regime,
+        status=player.injury_status,
+        body_part=player.injury_body_part,
+        notes=player.injury_notes,
+        structural=is_structural(player.injury_body_part, player.injury_notes),
+    )
 
 
 def standard_deviations(
@@ -206,6 +270,7 @@ __all__ = [
     "roster_names",
     "blended_projections",
     "compute_availability",
+    "health_of",
     "current_starters",
     "fetch_market_fits",
     "find_opponent",

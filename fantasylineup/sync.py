@@ -77,6 +77,9 @@ def sync_players(conn: sqlite3.Connection, client: SleeperClient, ttl_hours: int
                 p.get("years_exp"),
                 p.get("depth_chart_order"),
                 p.get("search_rank"),
+                p.get("injury_status"),
+                p.get("injury_body_part"),
+                p.get("injury_notes"),
                 now,
             )
         )
@@ -85,14 +88,18 @@ def sync_players(conn: sqlite3.Connection, client: SleeperClient, ttl_hours: int
         """
         INSERT INTO players (sleeper_id, kalshi_id, espn_id, gsis_id, full_name, search_name,
                              team, position, fantasy_positions, active, status, years_exp,
-                             depth_chart_order, search_rank, updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                             depth_chart_order, search_rank, injury_status,
+                             injury_body_part, injury_notes, updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(sleeper_id) DO UPDATE SET
             kalshi_id=excluded.kalshi_id, espn_id=excluded.espn_id, gsis_id=excluded.gsis_id,
             full_name=excluded.full_name, search_name=excluded.search_name, team=excluded.team,
             position=excluded.position, fantasy_positions=excluded.fantasy_positions,
             active=excluded.active, status=excluded.status, years_exp=excluded.years_exp,
             depth_chart_order=excluded.depth_chart_order, search_rank=excluded.search_rank,
+            injury_status=excluded.injury_status,
+            injury_body_part=excluded.injury_body_part,
+            injury_notes=excluded.injury_notes,
             updated_at=excluded.updated_at
         """,
         rows,
