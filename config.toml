@@ -1,0 +1,29 @@
+# ZOO + PEARL — Sleeper fantasy lineup advisor
+[league]
+league_id = "1389691132912361472"
+roster_id = 5                                    # ThaneosTV / "Patrick Likes It Rough"
+season = 2026
+# 2025 season, status=complete — used as the backtest / prior-fitting corpus
+previous_league_id = "1257120142102372352"
+
+[paths]
+db = "data/fantasylineup.db"
+cache = "data/cache"
+reports = "reports"
+site = "docs"
+
+[sources]
+sleeper_base = "https://api.sleeper.app"
+kalshi_base = "https://api.elections.kalshi.com/trade-api/v2"
+# Sleeper asks for <1000 calls/min; we stay far below and cache aggressively.
+max_calls_per_min = 120
+# The 14.6MB player dump only needs refreshing daily.
+players_dump_ttl_hours = 24
+# Injury status can change hourly on game days.
+status_ttl_minutes = 30
+
+[model]
+# Kalshi shifts the Sleeper baseline within this band; it never replaces it.
+kalshi_max_shift = 0.25
+# Monte Carlo draws for win-probability evaluation.
+sim_draws = 20000
