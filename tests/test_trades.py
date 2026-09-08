@@ -343,6 +343,72 @@ def test_rationale_uses_each_player_own_position():
             )
 
 
+def test_pitch_has_no_filler():
+    """The message must read like a league-mate, not a form letter.
+
+    Greetings and offers to "adjust the pieces" are the tells that make an
+    otherwise sound proposal look automated, and get it ignored.
+    """
+    mine = [
+        p("Alder", "QB", 300.0),
+        p("Bramble", "TE", 240.0),
+        p("Cedar", "TE", 169.0),
+        p("Dogwood", "RB", 206.0),
+        p("Elm", "WR", 250.0),
+        p("Fir", "WR", 210.0),
+        p("Gorse", "WR", 130.0),
+        p("Hazel", "WR", 125.0),
+    ]
+    theirs = [
+        p("Juniper", "QB", 300.0),
+        p("Kapok", "RB", 247.0),
+        p("Larch", "RB", 120.0),
+        p("Maple", "TE", 90.0),
+        p("Nutmeg", "WR", 240.0),
+        p("Olive", "WR", 200.0),
+        p("Poplar", "WR", 190.0),
+        p("Quince", "WR", 180.0),
+    ]
+    slots = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX"]
+    _, rationale = _explained(mine, theirs, slots)
+    lowered = rationale.pitch.lower()
+
+    for tell in ("hey ", "interested in a trade", "happy to adjust", "let me know",
+                 "helps us both", "cheers", "thanks!"):
+        assert tell not in lowered, f"filler phrase in pitch: {tell!r}"
+
+    # It should open with the offer itself.
+    assert rationale.pitch.splitlines()[0].endswith("?")
+
+
+def test_pitch_quantifies_their_side():
+    """The reason to reply is the number, so it has to be in the message."""
+    mine = [
+        p("Alder", "QB", 300.0),
+        p("Bramble", "TE", 240.0),
+        p("Cedar", "TE", 169.0),
+        p("Dogwood", "RB", 206.0),
+        p("Elm", "WR", 250.0),
+        p("Fir", "WR", 210.0),
+        p("Gorse", "WR", 130.0),
+        p("Hazel", "WR", 125.0),
+    ]
+    theirs = [
+        p("Juniper", "QB", 300.0),
+        p("Kapok", "RB", 247.0),
+        p("Larch", "RB", 120.0),
+        p("Maple", "TE", 90.0),
+        p("Nutmeg", "WR", 240.0),
+        p("Olive", "WR", 200.0),
+        p("Poplar", "WR", 190.0),
+        p("Quince", "WR", 180.0),
+    ]
+    slots = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX"]
+    proposal, rationale = _explained(mine, theirs, slots)
+    assert f"+{proposal.their_gain:.0f} points" in rationale.pitch
+    assert "rest of season" in rationale.pitch
+
+
 def test_pitch_is_wrapped_for_pasting():
     """Unwrapped prose pastes into messaging apps as one unreadable line."""
     mine = [
@@ -369,16 +435,19 @@ def test_pitch_is_wrapped_for_pasting():
     _, rationale = _explained(mine, theirs, slots)
 
     assert all(len(line) <= 72 for line in rationale.pitch.split("\n"))
-    assert "Unc Show" in rationale.pitch
     assert rationale.why and rationale.their_angle
 
 
-def test_pitch_names_only_players_in_the_deal():
-    """The message must not reference players who are not part of the offer.
+def test_pitch_never_invents_a_player():
+    """Every name in the message must exist on one of the two rosters.
 
-    Fabricating a name is the fastest way to make an otherwise sound proposal
-    look careless. Names here are deliberately distinct rather than sharing
-    prefixes, so a substring match cannot pass the check by accident.
+    The message deliberately names people outside the deal -- the player the
+    incoming man displaces, and the one blocking him on my bench -- because
+    those are the checkable, persuasive details. What it must never do is
+    invent someone, which would make an otherwise sound proposal look careless.
+
+    Names here are deliberately distinct rather than sharing prefixes, so a
+    substring cannot satisfy the check by accident.
     """
     mine = [
         p("Alder", "QB", 300.0),
@@ -403,7 +472,47 @@ def test_pitch_names_only_players_in_the_deal():
     slots = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX"]
     proposal, rationale = _explained(mine, theirs, slots)
 
-    involved = {x.name for x in proposal.give} | {x.name for x in proposal.get}
-    everyone = {x.name for x in mine} | {x.name for x in theirs}
-    for name in everyone - involved:
-        assert name not in rationale.pitch
+    import re
+
+    known = {x.name for x in mine} | {x.name for x in theirs}
+    # Split on word boundaries so trailing punctuation does not turn a real
+    # name into an unrecognised token.
+    words = set(re.findall(r"[A-Za-z']+", rationale.pitch))
+    sentence_starters = {"By", "I", "On", "Worth"}
+    invented = {w for w in words if w[0].isupper() and w not in known} - sentence_starters
+    assert not invented, f"invented names: {invented}"
+
+    # The deal's own players must of course appear.
+    for player in (*proposal.give, *proposal.get):
+        assert player.name in rationale.pitch
+
+
+def test_pitch_names_who_the_incoming_player_displaces():
+    """The strongest argument is concrete: who he beats out in *their* lineup.
+
+    A position count ("you roster 2 at TE") is weaker and easier to wave away
+    than naming the man who moves to the bench.
+    """
+    mine = [
+        p("Alder", "QB", 300.0),
+        p("Bramble", "TE", 240.0),
+        p("Cedar", "TE", 169.0),
+        p("Dogwood", "RB", 206.0),
+        p("Elm", "WR", 250.0),
+        p("Fir", "WR", 210.0),
+        p("Gorse", "WR", 130.0),
+        p("Hazel", "WR", 125.0),
+    ]
+    theirs = [
+        p("Juniper", "QB", 300.0),
+        p("Kapok", "RB", 247.0),
+        p("Larch", "RB", 120.0),
+        p("Maple", "TE", 90.0),
+        p("Nutmeg", "WR", 240.0),
+        p("Olive", "WR", 200.0),
+        p("Poplar", "WR", 190.0),
+        p("Quince", "WR", 180.0),
+    ]
+    slots = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX"]
+    _, rationale = _explained(mine, theirs, slots)
+    assert "moves to your bench" in rationale.pitch or "start for you" in rationale.pitch

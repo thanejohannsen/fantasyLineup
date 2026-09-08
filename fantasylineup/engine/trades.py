@@ -258,6 +258,27 @@ def explain_trade(
     they_start_incoming = [p for p in proposal.give if p.sleeper_id in their_after_starters]
     their_benched_out = [p for p in proposal.get if p.sleeper_id not in their_before_starters]
 
+    # Who the incoming player pushes out of *their* lineup. Naming him is the
+    # most checkable form of the argument, and the one they would make anyway.
+    outgoing_ids = {p.sleeper_id for p in proposal.get}
+    displaced = [
+        player
+        for player in lineup_optimal(their_roster, slots).assignments.values()
+        if player.sleeper_id not in their_after_starters
+        and player.sleeper_id not in outgoing_ids
+    ]
+
+    # Who is blocking the player I am sending, so my own reason is specific.
+    blocked_by = None
+    if sending_benched:
+        same_position = [
+            player
+            for player in my_roster
+            if player.position == sending_benched[0].position
+            and player.sleeper_id in my_before_starters
+        ]
+        blocked_by = max(same_position, key=lambda x: x.points) if same_position else None
+
     # --- why this helps me -------------------------------------------------
     parts = []
     if sending_benched:
@@ -289,51 +310,60 @@ def explain_trade(
     their_angle = "; ".join(their_parts) + f". Worth +{proposal.their_gain:.0f} to them."
 
     # --- the message -------------------------------------------------------
+    # Terse and specific, in the register a league-mate actually writes in. No
+    # greeting, no sign-off, no offer to "adjust the pieces": pleasantries read
+    # as filler and make a sound proposal look automated. What earns a reply is
+    # the concrete claim -- who the player displaces in *their* lineup, and what
+    # it is worth over the rest of the season.
     give_names = _names(proposal.give)
     get_names = _names(proposal.get)
 
-    opening = f"Hey {proposal.partner_name} - interested in a trade?"
+    lines = [f"{give_names} for {get_names}?"]
 
-    if sending_benched and they_start_incoming:
-        body = (
-            f"I'm deep at {sending_benched[0].position} and "
-            f"{_names(tuple(sending_benched))} is buried on my bench, so he's "
-            f"doing nothing for me. Looking at your roster he'd walk straight "
-            f"into your lineup."
+    # Naming who he beats out is far stronger than naming a position count:
+    # it is checkable, and it is the argument they would make themselves.
+    if they_start_incoming and displaced:
+        # Phrased so the counts cannot be misread: two incoming players do not
+        # each displace the same man, they push a set of players to the bench.
+        verb = "would both start" if len(they_start_incoming) > 1 else "would start"
+        moves = "move" if len(displaced) > 1 else "moves"
+        lines.append(
+            f"{_names(tuple(they_start_incoming))} {verb} for you - "
+            f"{_names(tuple(displaced))} {moves} to your bench. Worth about "
+            f"+{proposal.their_gain:.0f} points to your lineup rest of season "
+            f"by my numbers."
+        )
+    elif they_start_incoming:
+        lines.append(
+            f"{_names(tuple(they_start_incoming))} slots straight into your "
+            f"lineup - about +{proposal.their_gain:.0f} points rest of season "
+            f"by my numbers."
+        )
+    else:
+        lines.append(
+            f"By my numbers it's worth about +{proposal.their_gain:.0f} points "
+            f"to your lineup rest of season."
+        )
+
+    # A short, true reason for wanting it. Saying plainly what I get out of the
+    # deal reads as straightforward rather than as an angle being worked.
+    if sending_benched and blocked_by:
+        lines.append(
+            f"On my end {_names(tuple(sending_benched))} is behind "
+            f"{blocked_by.name}, so he doesn't start for me."
+        )
+    elif sending_benched:
+        lines.append(
+            f"On my end {_names(tuple(sending_benched))} isn't cracking my lineup."
         )
     elif len(proposal.give) > len(proposal.get):
-        # A 2-for-1 is a genuine two-sided argument: I consolidate into a
-        # better starter, they get depth and a free roster spot's worth of
-        # value. Say both halves rather than only mine.
-        body = (
-            f"I'm carrying more depth than I can start, so I'd rather "
-            f"consolidate two players into one I can actually use. You'd be "
-            f"getting two contributors back for one."
+        lines.append(
+            "I'm carrying more depth than I can start and would rather run one "
+            "player I can actually use."
         )
     elif receiving_starter:
-        body = (
-            f"{get_names} would slot straight into my lineup, and looking at "
-            f"your roster I think {give_names} does the same for you."
-        )
-    else:
-        body = "I think there's a deal here that helps us both."
+        lines.append(f"{get_names} fills a hole for me.")
 
-    offer = f"I'd send {give_names} for {get_names}."
-
-    if their_benched_out:
-        closing = (
-            f"From your side you'd be moving someone who isn't starting for you "
-            f"anyway and filling a real hole. Happy to adjust if the shape isn't right."
-        )
-    else:
-        closing = (
-            "I think it genuinely helps us both - happy to adjust the pieces if "
-            "you'd rather shape it differently."
-        )
-
-    # Wrapped to a messaging-app measure so it can be pasted without reflowing
-    # into one unreadable line.
-    pitch = "\n\n".join(
-        "\n".join(textwrap.wrap(part, 72)) for part in (opening, body, offer, closing)
-    )
+    # Wrapped so it pastes into a messaging app without reflowing into one line.
+    pitch = "\n\n".join("\n".join(textwrap.wrap(line, 72)) for line in lines)
     return TradeRationale(why=why, their_angle=their_angle, pitch=pitch)
