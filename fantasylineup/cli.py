@@ -9,6 +9,7 @@ import sys
 from .config import load_config
 from .db import open_db
 from .engine.lineup import starting_slots
+from .engine.confidence import assess_all
 from .engine.trades import best_trades_across_league, explain_trade
 from .engine.waivers import explain_no_targets, rank_waiver_targets, shortlist_candidates
 from .model.calibration import (
@@ -21,6 +22,7 @@ from .model.projections import REST_OF_SEASON, latest_projections, sync_projecti
 from .pipeline import (
     all_rosters,
     current_starters,
+    games_played,
     league_activity,
     blended_projections,
     fetch_market_fits,
@@ -242,7 +244,27 @@ def cmd_moves(args: argparse.Namespace) -> int:
         rosters = {rid: build(ids) for rid, ids in all_rosters(conn, cfg.league.league_id).items()}
         names = roster_names(conn, cfg.league.league_id)
         proposals = best_trades_across_league(
-            my_players, rosters, names, slots, cfg.league.roster_id, limit=args.limit
+            my_players,
+            rosters,
+            names,
+            slots,
+            cfg.league.roster_id,
+            limit=args.limit,
+            games_played=games_played(conn, cfg.league.season),
+            jitter=cfg.trades.jitter,
+            draws=cfg.trades.draws,
+            min_games=cfg.trades.min_games_for_contingency,
+            require_stable=cfg.trades.require_stable,
+        )
+        confidences = assess_all(
+            proposals,
+            my_players,
+            slots,
+            games_played=games_played(conn, cfg.league.season),
+            jitter=cfg.trades.jitter,
+            draws=cfg.trades.draws,
+            min_games=cfg.trades.min_games_for_contingency,
+            require_stable=cfg.trades.require_stable,
         )
         my_set = current_starters(conn, cfg.league.league_id, cfg.league.roster_id, my_players)
         rationales = {
@@ -266,7 +288,11 @@ def cmd_moves(args: argparse.Namespace) -> int:
             conn, client, cfg.league.league_id, current_week, cfg.league.roster_id
         )
 
-    print(render_moves(targets, proposals, roster_limit, near_miss, rationales, activity))
+    print(
+        render_moves(
+            targets, proposals, roster_limit, near_miss, rationales, activity, confidences
+        )
+    )
     return 0
 
 
@@ -388,8 +414,27 @@ def cmd_refresh(args: argparse.Namespace) -> int:
                 rid: build(ids) for rid, ids in all_rosters(conn, cfg.league.league_id).items()
             }
             proposals = best_trades_across_league(
-                my_ros, rosters, roster_names(conn, cfg.league.league_id), slots,
-                cfg.league.roster_id, limit=4,
+                my_ros,
+                rosters,
+                roster_names(conn, cfg.league.league_id),
+                slots,
+                cfg.league.roster_id,
+                limit=4,
+                games_played=games_played(conn, cfg.league.season),
+                jitter=cfg.trades.jitter,
+                draws=cfg.trades.draws,
+                min_games=cfg.trades.min_games_for_contingency,
+                require_stable=cfg.trades.require_stable,
+            )
+            confidences = assess_all(
+                proposals,
+                my_ros,
+                slots,
+                games_played=games_played(conn, cfg.league.season),
+                jitter=cfg.trades.jitter,
+                draws=cfg.trades.draws,
+                min_games=cfg.trades.min_games_for_contingency,
+                require_stable=cfg.trades.require_stable,
             )
             my_set = current_starters(
                 conn, cfg.league.league_id, cfg.league.roster_id, my_ros
@@ -413,7 +458,9 @@ def cmd_refresh(args: argparse.Namespace) -> int:
             activity = league_activity(
                 conn, client, cfg.league.league_id, week, cfg.league.roster_id
             )
-            moves_html = render_moves_panel(targets, proposals, rationales, activity)
+            moves_html = render_moves_panel(
+                targets, proposals, rationales, activity, confidences
+            )
 
     target = cfg.paths.site / "index.html"
     target.write_text(

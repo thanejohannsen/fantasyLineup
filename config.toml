@@ -28,6 +28,20 @@ kalshi_max_shift = 0.25
 # Monte Carlo draws for win-probability evaluation.
 sim_draws = 20000
 
+[trades]
+# A marginal-lineup-value gain is a difference of two optimisations, and small
+# projection movements can flip a slot assignment and jump the result. One live
+# proposal read +23.9, +8.3 and -7.8 across successive refreshes of the same
+# sources. These settings test a gain against ordinary drift before it is shown.
+jitter = 0.03          # plausible relative error on a rest-of-season projection
+draws = 200            # perturbations per proposal
+require_stable = true  # drop offers whose 10th percentile gain is negative
+# Games of current-season evidence before a trade may lean on a player carrying
+# an injury designation. Applies to players we would be *relying* on, never to
+# one we are sending: selling an injured player is best done before the market
+# prices the injury, so gating that direction would cost the sell-high window.
+min_games_for_contingency = 3
+
 [health]
 # Rest-of-season multipliers by injury regime. Weekly projections need no
 # haircut -- Sleeper already omits players who are not playing.

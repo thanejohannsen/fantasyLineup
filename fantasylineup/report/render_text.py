@@ -148,7 +148,13 @@ def render_advisory(advisory: Advisory, team_name: str = "", blends: dict | None
 
 
 def render_moves(
-    targets, proposals, roster_limit: int, near_miss=None, rationales=None, activity=None
+    targets,
+    proposals,
+    roster_limit: int,
+    near_miss=None,
+    rationales=None,
+    activity=None,
+    confidences=None,
 ) -> str:
     """Waiver targets and trade offers.
 
@@ -211,7 +217,30 @@ def render_moves(
             )
         lines.append(f"      you send    {give}")
         lines.append(f"      you receive {get}")
-        lines.append(f"      you +{p.my_gain:.1f} ROS pts, them +{p.their_gain:.1f}")
+        conf = (confidences or {}).get(i)
+        if conf is not None:
+            # A range, not a point. The gain is a difference of two
+            # optimisations and jumps discretely when a slot assignment
+            # flips, so a bare figure overstates how settled it is.
+            lines.append(
+                f"      you +{p.my_gain:.1f} ROS pts "
+                f"({conf.p10:+.0f} to {conf.p90:+.0f} under projection error), "
+                f"them +{p.their_gain:.1f}"
+            )
+            for ct in conf.contingencies:
+                note = (
+                    f", {ct.games_played} games this season"
+                    if ct.is_injured
+                    else ""
+                )
+                lines.append(
+                    f"      -- rests on {ct.player.name}: without him "
+                    f"{ct.gain_without:+.0f}{note}"
+                )
+        else:
+            lines.append(
+                f"      you +{p.my_gain:.1f} ROS pts, them +{p.their_gain:.1f}"
+            )
         r = rationales.get(i)
         if r:
             lines.append("")

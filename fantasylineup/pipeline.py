@@ -273,6 +273,7 @@ __all__ = [
     "health_of",
     "current_starters",
     "fetch_market_fits",
+    "games_played",
     "find_opponent",
     "lock_context",
     "roster_players_for",
@@ -434,3 +435,23 @@ def current_starters(
         (row["sid"], roster_id),
     )
     return [by_id[r["sleeper_id"]] for r in rows if r["sleeper_id"] in by_id]
+
+
+def games_played(conn: sqlite3.Connection, season: int) -> dict[str, int]:
+    """How many games each player has actually appeared in this season.
+
+    Counted from stored actuals rather than a projection field, so it reflects
+    what has happened rather than what was expected. A player returning from
+    surgery has zero here until he plays, which is the whole point: it is the
+    only honest answer to "how is he looking this year" before he has looked
+    like anything.
+    """
+    return {
+        r["sleeper_id"]: int(r["n"])
+        for r in conn.execute(
+            """SELECT sleeper_id, COUNT(*) AS n FROM actuals
+               WHERE season = ? AND points IS NOT NULL
+               GROUP BY sleeper_id""",
+            (season,),
+        )
+    }

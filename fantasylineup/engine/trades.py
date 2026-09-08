@@ -30,12 +30,15 @@ insult.
 
 from __future__ import annotations
 
+import logging
 import textwrap
 from dataclasses import dataclass
 from itertools import combinations
 
 from ..model.health import HealthStatus, Regime, is_structural
 from .lineup import PlayerProjection, lineup_value, optimize_lineup
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -173,9 +176,21 @@ def best_trades_across_league(
     slots: list[str],
     my_roster_id: int,
     limit: int = 5,
+    games_played: dict[str, int] | None = None,
+    assess_confidence: bool = True,
+    jitter: float = 0.03,
+    draws: int = 200,
+    min_games: int = 3,
+    require_stable: bool = True,
     **kwargs: object,
 ) -> list[TradeProposal]:
-    """Search every opponent and return the strongest offers overall."""
+    """Search every opponent and return the strongest offers overall.
+
+    Confidence is assessed only on the ranked shortlist, not on every candidate.
+    The screening search evaluates tens of thousands of combinations and the
+    assessment costs a few hundred lineup solves apiece; doing it up front would
+    be minutes of work to discard almost all of it.
+    """
     found: list[TradeProposal] = []
     for roster_id, roster in rosters.items():
         if roster_id == my_roster_id:
@@ -193,12 +208,35 @@ def best_trades_across_league(
     found.sort(key=lambda t: (t.my_gain, t.their_gain), reverse=True)
 
     # One proposal per partner, so the output is a set of distinct offers to
-    # send rather than five variations on the same trade.
+    # send rather than five variations on the same trade. Where the best offer
+    # to a partner fails its confidence check, fall through to the next one
+    # rather than dropping that partner entirely.
+    from .confidence import assess
+
     seen: set[int] = set()
     unique: list[TradeProposal] = []
     for proposal in found:
         if proposal.partner_roster_id in seen:
             continue
+        if assess_confidence:
+            confidence = assess(
+                proposal,
+                my_roster,
+                slots,
+                games_played=games_played,
+                min_gain=float(kwargs.get("min_my_gain", 3.0)),  # type: ignore[arg-type]
+                jitter=jitter,
+                draws=draws,
+                min_games=min_games,
+                require_stable=require_stable,
+            )
+            if not confidence.is_offerable:
+                log.info(
+                    "Dropping %s offer: %s",
+                    proposal.partner_name,
+                    confidence.describe(),
+                )
+                continue
         seen.add(proposal.partner_roster_id)
         unique.append(proposal)
         if len(unique) >= limit:

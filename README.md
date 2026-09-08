@@ -35,6 +35,10 @@ hand in the app.
   claim is derived from roster state both managers can already see — a message
   that misstates a roster the other person can check in ten seconds is worse
   than no message, and it poisons the next offer too.
+- **Tests each gain against being wrong.** A marginal-value gain is a difference
+  of two optimisations, so it jumps discretely when a slot assignment flips and a
+  bare figure reads far more settled than it is. Every offer is quoted as a range
+  and withheld when that range straddles zero.
 - **Prices and discloses injuries.** Season-ending injuries are zeroed and
   excluded from trades in both directions; players back from surgery are
   discounted rather than written off; and any injured player in a proposal is
@@ -159,6 +163,45 @@ which is where a currently-playing post-surgery player sits by construction.
 that decline, so the number is deliberately small and lives in `config.toml`.
 It is the first thing `fl calibrate` should measure once weeks accumulate.
 
+## When a gain is not real
+
+One live proposal was quoted at +23.9, then +8.3, then -7.8 across successive
+refreshes of the same sources -- same trade, same rosters, no new information.
+Printed to one decimal place it read like an edge. It was noise, and it was about
+to be sent to another manager.
+
+The cause is structural rather than a bug. Marginal lineup value is the
+difference between two optimisations, and an optimisation result is a step
+function of its inputs: a projection moving a point or two flips which bench
+player occupies a FLEX slot, and the gain jumps. So three things are checked
+before an offer is shown.
+
+**Stability.** Every projection is perturbed by a plausible relative error and
+the gain recomputed a few hundred times. Each draw perturbs a player once and
+uses that same perturbation on both sides of the subtraction, so what is measured
+is the sensitivity of the *slot assignment*, not added noise. The tenth and
+ninetieth percentiles are reported as a range, and an offer whose tenth
+percentile is negative is not shown. The draws are seeded: advice that flickers
+between hourly refreshes is worse than advice that is merely uncertain.
+
+**Contingency.** Which player does the gain actually rest on? When a trade sends
+two starters for one, the lineup hole is backfilled by promoting someone off the
+bench, and the whole advantage can belong to that promotion rather than to the
+players being exchanged. Each promoted player is zeroed and the lineup re-solved,
+so the optimiser backfills with the real next alternative rather than an assumed
+replacement level. In the live case the entire +8.3 came from promoting a tight
+end returning from Achilles surgery; without him it was -47.5.
+
+**Evidence.** A trade may not *lean on* a player carrying an injury designation
+who has under three games this season. Snap share stabilises inside that window
+where fantasy points, being touchdown-driven, do not. The gate is deliberately
+one-sided: a player being **sent** is never tested this way, because selling an
+injured asset is best done before the market prices the injury, and requiring
+evidence there would suppress exactly the trades worth making first.
+
+Thresholds live in `config.toml` under `[trades]`, `require_stable` included --
+they are policy, not physics.
+
 ## Does it notice completed trades?
 
 Yes, and not because it watches for them. Availability and every roster figure
@@ -194,7 +237,7 @@ generates would be breaking new ground, which is also why the pitch text matters
 ## Development
 
 ```bash
-.venv/bin/python -m pytest        # ~80 tests, no network required
+.venv/bin/python -m pytest        # 118 tests, no network required
 ```
 
 Tests run against captured real API responses in `fixtures/`, so they fail if an

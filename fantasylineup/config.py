@@ -50,6 +50,16 @@ class ModelConfig:
 
 
 @dataclass(frozen=True)
+class TradesConfig:
+    """How hard a proposed gain must work before it is shown."""
+
+    jitter: float = 0.03
+    draws: int = 200
+    require_stable: bool = True
+    min_games_for_contingency: int = 3
+
+
+@dataclass(frozen=True)
 class HealthConfig:
     """Rest-of-season multipliers per injury regime."""
 
@@ -75,6 +85,7 @@ class Config:
     paths: PathsConfig
     sources: SourcesConfig
     model: ModelConfig
+    trades: TradesConfig
     health: HealthConfig
     root: Path
 
@@ -101,6 +112,7 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         paths=paths,
         sources=SourcesConfig(**raw["sources"]),
         model=ModelConfig(**raw["model"]),
+        trades=TradesConfig(**raw.get("trades", {})),
         health=HealthConfig(**raw.get("health", {})),
         root=root,
     )

@@ -285,7 +285,9 @@ def render_dashboard(advisory: Advisory, team_name: str, moves_html: str = "") -
 """
 
 
-def render_moves_panel(targets, proposals, rationales=None, activity=None) -> str:
+def render_moves_panel(
+    targets, proposals, rationales=None, activity=None, confidences=None
+) -> str:
     """Waiver and trade panel, appended to the dashboard."""
     parts = []
 
@@ -330,6 +332,29 @@ def render_moves_panel(targets, proposals, rationales=None, activity=None) -> st
                     f'<p class="conflict">Competes with {others} - all need '
                     f"{_esc(', '.join(ranked.shared_players))}. Only one can happen.</p>"
                 )
+            # A range, not a point. The gain is a difference of two
+            # optimisations and jumps discretely when a slot assignment flips,
+            # so a bare figure reads more settled than it is.
+            conf = (confidences or {}).get(i)
+            if conf is not None:
+                gains = (
+                    f'<div class="slot">you +{p.my_gain:.0f} '
+                    f"({conf.p10:+.0f} to {conf.p90:+.0f} under projection error), "
+                    f"them +{p.their_gain:.0f} rest-of-season pts</div>"
+                )
+                rests = "".join(
+                    f'<p class="conflict">Rests on {_esc(ct.player.name)}: without him '
+                    f"{ct.gain_without:+.0f}"
+                    + (f", {ct.games_played} games this season" if ct.is_injured else "")
+                    + "</p>"
+                    for ct in conf.contingencies
+                )
+            else:
+                gains = (
+                    f'<div class="slot">you +{p.my_gain:.0f}, them +{p.their_gain:.0f} '
+                    f"rest-of-season pts</div>"
+                )
+                rests = ""
             blocks.append(
                 f'<div class="trade"><div class="tradehead">'
                 f'<span class="rank">#{ranked.rank}</span> '
@@ -337,8 +362,7 @@ def render_moves_panel(targets, proposals, rationales=None, activity=None) -> st
                 f'<span class="slot">[{_esc(p.shape)}]</span> {badge}</div>'
                 f"<div>Send <b>{_esc(', '.join(x.name for x in p.give))}</b></div>"
                 f"<div>Get <b>{_esc(', '.join(x.name for x in p.get))}</b></div>"
-                f'<div class="slot">you +{p.my_gain:.0f}, them +{p.their_gain:.0f} '
-                f"rest-of-season pts</div>{conflict}{why}{angle}{pitch}</div>"
+                f"{gains}{rests}{conflict}{why}{angle}{pitch}</div>"
             )
         parts.append(
             f'<div class="panel"><h2>Trade offers</h2>'
