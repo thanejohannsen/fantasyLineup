@@ -200,6 +200,8 @@ def lock_context(
 
 __all__ = [
     "MatchupContext",
+    "all_rosters",
+    "roster_names",
     "blended_projections",
     "compute_availability",
     "fetch_market_fits",
@@ -209,3 +211,40 @@ __all__ = [
     "standard_deviations",
     "starting_slots",
 ]
+
+
+def all_rosters(conn: sqlite3.Connection, league_id: str) -> dict[int, set[str]]:
+    """Every team's current roster, from the newest snapshot."""
+    row = conn.execute(
+        "SELECT MAX(snapshot_id) AS sid FROM roster_snapshots WHERE league_id = ?",
+        (league_id,),
+    ).fetchone()
+    if row is None or row["sid"] is None:
+        return {}
+    out: dict[int, set[str]] = {}
+    for r in conn.execute(
+        "SELECT roster_id, sleeper_id FROM roster_players WHERE snapshot_id = ?", (row["sid"],)
+    ):
+        out.setdefault(int(r["roster_id"]), set()).add(r["sleeper_id"])
+    return out
+
+
+def roster_names(conn: sqlite3.Connection, league_id: str) -> dict[int, str]:
+    row = conn.execute(
+        "SELECT MAX(snapshot_id) AS sid FROM roster_snapshots WHERE league_id = ?",
+        (league_id,),
+    ).fetchone()
+    if row is None or row["sid"] is None:
+        return {}
+    return {
+        int(r["roster_id"]): r["name"] or f"roster {r['roster_id']}"
+        for r in conn.execute(
+            """SELECT DISTINCT rp.roster_id,
+                      COALESCE(u.team_name, u.display_name) AS name
+               FROM roster_players rp
+               LEFT JOIN league_users u
+                 ON u.user_id = rp.owner_id AND u.league_id = ?
+               WHERE rp.snapshot_id = ?""",
+            (league_id, row["sid"]),
+        )
+    }

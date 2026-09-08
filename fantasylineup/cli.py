@@ -9,16 +9,20 @@ import sys
 from .config import load_config
 from .db import open_db
 from .engine.lineup import starting_slots
-from .model.projections import sync_projections
+from .engine.trades import best_trades_across_league
+from .engine.waivers import explain_no_targets, rank_waiver_targets, shortlist_candidates
+from .model.projections import REST_OF_SEASON, latest_projections, sync_projections
 from .pipeline import (
+    all_rosters,
     blended_projections,
     fetch_market_fits,
     find_opponent,
+    roster_names,
     roster_players_for,
     standard_deviations,
 )
 from .report.advisory import build_advisory
-from .report.render_text import render_advisory
+from .report.render_text import render_advisory, render_moves
 from .sources.kickoffs import sync_kickoffs
 from .sources.sleeper import SleeperClient
 from .sync import (
@@ -154,6 +158,60 @@ def cmd_advise(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_moves(args: argparse.Namespace) -> int:
+    """Waiver targets and trade offers, valued on rest-of-season projections."""
+    cfg = load_config(args.config)
+    cfg.paths.ensure()
+
+    with open_db(cfg.paths.db) as conn, SleeperClient(
+        cfg.sources.sleeper_base,
+        cfg.paths.cache,
+        max_calls_per_min=cfg.sources.max_calls_per_min,
+    ) as client:
+        league = load_league(conn, cfg.league.league_id)
+        scoring = league["scoring_settings"]
+        slots = starting_slots(league["roster_positions"])
+        roster_limit = len([s for s in league["roster_positions"] if s != "IR"])
+
+        if not args.no_refresh:
+            sync_rosters(conn, client, cfg.league.league_id)
+            sync_users(conn, client, cfg.league.league_id)
+            # Rest-of-season is the right horizon: a trade changes the roster
+            # for the remainder of the season, not for one matchup.
+            sync_projections(conn, client, cfg.league.season, None, scoring)
+
+        fits = {} if args.no_kalshi else fetch_market_fits(cfg.sources.kalshi_base)
+        avail = compute_availability(conn, cfg.league.league_id, cfg.league.roster_id)
+        ros = REST_OF_SEASON
+
+        def build(ids):
+            return blended_projections(
+                conn, ids, cfg.league.season, ros, scoring, fits, cfg.model.kalshi_max_shift
+            )[0]
+
+        my_players = build(avail.my_players)
+
+        # --- waivers -------------------------------------------------------
+        pool = shortlist_candidates(
+            conn, avail.free_agents, latest_projections(conn, cfg.league.season, ros)
+        )
+        candidates = build(pool)
+        targets = rank_waiver_targets(
+            my_players, candidates, slots, roster_limit=roster_limit, limit=args.limit
+        )
+        near_miss = explain_no_targets(my_players, candidates, slots)
+
+        # --- trades --------------------------------------------------------
+        rosters = {rid: build(ids) for rid, ids in all_rosters(conn, cfg.league.league_id).items()}
+        names = roster_names(conn, cfg.league.league_id)
+        proposals = best_trades_across_league(
+            my_players, rosters, names, slots, cfg.league.roster_id, limit=args.limit
+        )
+
+    print(render_moves(targets, proposals, roster_limit, near_miss))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="fl", description="Lock-aware Sleeper lineup, waiver and trade advisor"
@@ -177,6 +235,12 @@ def main(argv: list[str] | None = None) -> int:
         "--no-kalshi", action="store_true", help="skip market data, use Sleeper projections only"
     )
     p_advise.set_defaults(func=cmd_advise)
+
+    p_moves = sub.add_parser("moves", help="waiver targets and trade offers")
+    p_moves.add_argument("--limit", type=int, default=5)
+    p_moves.add_argument("--no-refresh", action="store_true")
+    p_moves.add_argument("--no-kalshi", action="store_true")
+    p_moves.set_defaults(func=cmd_moves)
 
     args = parser.parse_args(argv)
     _setup_logging(args.verbose)

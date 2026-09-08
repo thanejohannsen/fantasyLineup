@@ -120,3 +120,51 @@ def render_advisory(advisory: Advisory, team_name: str = "", blends: dict | None
         lines.append(f"{len(locked)} starter(s) already locked and excluded from changes.")
 
     return "\n".join(lines)
+
+
+def render_moves(targets, proposals, roster_limit: int, near_miss=None) -> str:
+    """Waiver targets and trade offers.
+
+    Gains are rest-of-season points added to the best legal lineup, which is
+    what a move is actually worth -- not the incoming player's projection.
+    """
+    lines: list[str] = ["Roster moves", "============", ""]
+
+    lines.append("WAIVER TARGETS  (net gain after the required drop)")
+    if not targets:
+        lines.append("  Nothing available improves the lineup.")
+        if near_miss:
+            weakest, near = near_miss
+            if weakest is not None:
+                lines.append(
+                    f"  Bar to clear: your weakest displaceable starter is {weakest.name} "
+                    f"({weakest.position}, {weakest.points:.0f} ROS)."
+                )
+            for c in near:
+                lines.append(f"    closest: {c.name} ({c.position}, {c.points:.0f} ROS)")
+    for t in targets:
+        drop = f"  drop {t.drop.name} ({t.drop.points:.1f})" if t.drop else ""
+        lines.append(
+            f"  +{t.gain:5.1f}  ADD {t.player.name} "
+            f"({t.player.position}, {t.player.points:.1f} ROS){drop}"
+        )
+
+    lines.append("")
+    lines.append("TRADE OFFERS  (both sides must gain, or it gets declined)")
+    if not proposals:
+        lines.append("  No mutually beneficial trade found.")
+        lines.append(
+            "  With two FLEX slots a surplus running back or receiver still starts, "
+            "so positional imbalance has to be severe before a swap helps either side."
+        )
+    for p in proposals:
+        give = ", ".join(f"{x.name} ({x.points:.1f})" for x in p.give)
+        get = ", ".join(f"{x.name} ({x.points:.1f})" for x in p.get)
+        lines.append(f"  {p.partner_name}  [{p.shape}]")
+        lines.append(f"      you send    {give}")
+        lines.append(f"      you receive {get}")
+        lines.append(f"      you +{p.my_gain:.1f} ROS pts, them +{p.their_gain:.1f}")
+
+    lines.append("")
+    lines.append(f"Roster limit {roster_limit}. Sleeper's API is read-only: execute these by hand.")
+    return "\n".join(lines)
