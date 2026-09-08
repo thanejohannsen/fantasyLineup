@@ -11,6 +11,7 @@ from .db import open_db
 from .model.projections import REST_OF_SEASON, build_player_projections, sync_projections
 from .report.advisory import build_advisory
 from .report.render_text import render_advisory
+from .sources.kickoffs import sync_kickoffs
 from .sources.sleeper import SleeperClient
 from .sync import (
     compute_availability,
@@ -78,6 +79,8 @@ def cmd_advise(args: argparse.Namespace) -> int:
 
         if not args.no_refresh:
             sync_rosters(conn, client, cfg.league.league_id)
+            sync_schedule(conn, client, cfg.league.season)
+            sync_kickoffs(conn, cfg.league.season, week)
             sync_projections(conn, client, cfg.league.season, week, scoring)
             if args.ros:
                 sync_projections(conn, client, cfg.league.season, None, scoring)
@@ -90,6 +93,7 @@ def cmd_advise(args: argparse.Namespace) -> int:
             cfg.league.roster_id,
             players,
             league["roster_positions"],
+            cfg.league.season,
             week,
         )
 

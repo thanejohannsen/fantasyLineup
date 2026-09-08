@@ -10,9 +10,11 @@ the diff as an exercise.
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from ..engine.lineup import Lineup, PlayerProjection, optimize_lineup, starting_slots
+from ..engine.locks import LockState, locked_slot_assignments, next_deadline, player_lock_states
 
 
 @dataclass(frozen=True)
@@ -30,10 +32,21 @@ class Advisory:
     optimal: Lineup
     current: Lineup
     changes: list[LineupChange]
+    generated_at: datetime
+    lock_states: dict[str, LockState] = field(default_factory=dict)
+    deadline: datetime | None = None
 
     @property
     def gain(self) -> float:
         return self.optimal.total_points - self.current.total_points
+
+    @property
+    def locked_players(self) -> list[PlayerProjection]:
+        return [
+            p
+            for p in self.current.assignments.values()
+            if self.lock_states.get(p.sleeper_id, LockState(False, None)).locked
+        ]
 
 
 def current_lineup(
@@ -113,10 +126,23 @@ def build_advisory(
     roster_id: int,
     players: list[PlayerProjection],
     roster_positions: list[str],
+    season: int,
     week: int,
+    now: datetime | None = None,
 ) -> Advisory:
+    """Recommend a lineup, respecting what has already locked.
+
+    Starters whose games have kicked off are pinned in place and the remaining
+    slots optimised around them, so every change proposed is one that can still
+    actually be made in the app.
+    """
+    now = now or datetime.now(UTC)
     slots = starting_slots(roster_positions)
-    optimal = optimize_lineup(players, slots)
+
+    lock_states = player_lock_states(conn, players, season, week, now=now)
+    forced = locked_slot_assignments(conn, snapshot_id, roster_id, lock_states)
+
+    optimal = optimize_lineup(players, slots, forced=forced)
     current = current_lineup(conn, snapshot_id, roster_id, players, slots)
     return Advisory(
         week=week,
@@ -124,4 +150,7 @@ def build_advisory(
         optimal=optimal,
         current=current,
         changes=diff_lineups(optimal, current, slots),
+        generated_at=now,
+        lock_states=lock_states,
+        deadline=next_deadline(lock_states, now=now),
     )
