@@ -9,7 +9,7 @@ import sys
 from .config import load_config
 from .db import open_db
 from .engine.lineup import starting_slots
-from .engine.trades import best_trades_across_league
+from .engine.trades import best_trades_across_league, explain_trade
 from .engine.waivers import explain_no_targets, rank_waiver_targets, shortlist_candidates
 from .model.calibration import (
     fit_variance,
@@ -223,8 +223,12 @@ def cmd_moves(args: argparse.Namespace) -> int:
         proposals = best_trades_across_league(
             my_players, rosters, names, slots, cfg.league.roster_id, limit=args.limit
         )
+        rationales = {
+            i: explain_trade(p, my_players, rosters[p.partner_roster_id], slots)
+            for i, p in enumerate(proposals)
+        }
 
-    print(render_moves(targets, proposals, roster_limit, near_miss))
+    print(render_moves(targets, proposals, roster_limit, near_miss, rationales))
     return 0
 
 
@@ -341,7 +345,11 @@ def cmd_refresh(args: argparse.Namespace) -> int:
                 my_ros, rosters, roster_names(conn, cfg.league.league_id), slots,
                 cfg.league.roster_id, limit=4,
             )
-            moves_html = render_moves_panel(targets, proposals)
+            rationales = {
+                i: explain_trade(p, my_ros, rosters[p.partner_roster_id], slots)
+                for i, p in enumerate(proposals)
+            }
+            moves_html = render_moves_panel(targets, proposals, rationales)
 
     target = cfg.paths.site / "index.html"
     target.write_text(

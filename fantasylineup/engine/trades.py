@@ -30,6 +30,7 @@ insult.
 
 from __future__ import annotations
 
+import textwrap
 from dataclasses import dataclass
 from itertools import combinations
 
@@ -191,3 +192,148 @@ def best_trades_across_league(
         if len(unique) >= limit:
             break
     return unique
+
+
+@dataclass(frozen=True)
+class TradeRationale:
+    """Why a trade works, and a message that says so honestly.
+
+    Every claim is derived from roster state that both managers can already see
+    in the app -- who is rostered, who starts, what the projections say. Nothing
+    is invented or overstated, which matters for more than ethics: a pitch that
+    misrepresents a roster the other manager can inspect in ten seconds is worse
+    than no pitch, and it poisons the next offer too.
+
+    The honest framing is also the persuasive one here, because the engine only
+    ever proposes trades that improve both lineups. There is a real mutual
+    argument to make, so the message just has to make it clearly.
+    """
+
+    why: str
+    their_angle: str
+    pitch: str
+
+
+def _profile(roster: list[PlayerProjection], slots: list[str]) -> tuple[dict, set[str]]:
+    """Positional counts and who actually starts."""
+    from collections import Counter
+
+    lineup = lineup_optimal(roster, slots)
+    rostered = Counter(p.position for p in roster)
+    starters = {p.sleeper_id for p in lineup.assignments.values()}
+    return dict(rostered), starters
+
+
+def lineup_optimal(roster: list[PlayerProjection], slots: list[str]):
+    from .lineup import optimize_lineup
+
+    return optimize_lineup(roster, slots)
+
+
+def _names(players: tuple[PlayerProjection, ...]) -> str:
+    if len(players) == 1:
+        return players[0].name
+    return " and ".join([", ".join(p.name for p in players[:-1]), players[-1].name])
+
+
+def explain_trade(
+    proposal: TradeProposal,
+    my_roster: list[PlayerProjection],
+    their_roster: list[PlayerProjection],
+    slots: list[str],
+) -> TradeRationale:
+    """Build the rationale and a sendable message for one proposal."""
+    my_before_counts, my_before_starters = _profile(my_roster, slots)
+    their_before_counts, their_before_starters = _profile(their_roster, slots)
+
+    my_after = _swap(my_roster, proposal.give, proposal.get)
+    their_after = _swap(their_roster, proposal.get, proposal.give)
+    _, my_after_starters = _profile(my_after, slots)
+    _, their_after_starters = _profile(their_after, slots)
+
+    # The crispest possible argument: I am sending players who do not start for
+    # me and receiving one who does.
+    sending_benched = [p for p in proposal.give if p.sleeper_id not in my_before_starters]
+    receiving_starter = [p for p in proposal.get if p.sleeper_id in my_after_starters]
+    they_start_incoming = [p for p in proposal.give if p.sleeper_id in their_after_starters]
+    their_benched_out = [p for p in proposal.get if p.sleeper_id not in their_before_starters]
+
+    # --- why this helps me -------------------------------------------------
+    parts = []
+    if sending_benched:
+        surplus = sending_benched[0]
+        depth = my_before_counts.get(surplus.position, 0)
+        parts.append(
+            f"{_names(tuple(sending_benched))} sits on your bench "
+            f"({depth} {surplus.position}s rostered) and does not crack the lineup"
+        )
+    if receiving_starter:
+        parts.append(f"{_names(tuple(receiving_starter))} starts for you immediately")
+    if not parts:
+        parts.append("consolidates depth into a better starter")
+    why = "; ".join(parts) + f". Worth +{proposal.my_gain:.0f} points rest of season."
+
+    # --- why they should say yes -------------------------------------------
+    # Depth is reported per player: a package can span two positions, and
+    # describing both with one position count would be simply false.
+    their_parts = []
+    for player in they_start_incoming:
+        depth = their_before_counts.get(player.position, 0)
+        their_parts.append(
+            f"{player.name} starts for them (they roster {depth} at {player.position})"
+        )
+    if their_benched_out:
+        their_parts.append(f"{_names(tuple(their_benched_out))} is not in their lineup either")
+    if not their_parts:
+        their_parts.append("they gain lineup value at a position they are thin at")
+    their_angle = "; ".join(their_parts) + f". Worth +{proposal.their_gain:.0f} to them."
+
+    # --- the message -------------------------------------------------------
+    give_names = _names(proposal.give)
+    get_names = _names(proposal.get)
+
+    opening = f"Hey {proposal.partner_name} - interested in a trade?"
+
+    if sending_benched and they_start_incoming:
+        body = (
+            f"I'm deep at {sending_benched[0].position} and "
+            f"{_names(tuple(sending_benched))} is buried on my bench, so he's "
+            f"doing nothing for me. Looking at your roster he'd walk straight "
+            f"into your lineup."
+        )
+    elif len(proposal.give) > len(proposal.get):
+        # A 2-for-1 is a genuine two-sided argument: I consolidate into a
+        # better starter, they get depth and a free roster spot's worth of
+        # value. Say both halves rather than only mine.
+        body = (
+            f"I'm carrying more depth than I can start, so I'd rather "
+            f"consolidate two players into one I can actually use. You'd be "
+            f"getting two contributors back for one."
+        )
+    elif receiving_starter:
+        body = (
+            f"{get_names} would slot straight into my lineup, and looking at "
+            f"your roster I think {give_names} does the same for you."
+        )
+    else:
+        body = "I think there's a deal here that helps us both."
+
+    offer = f"I'd send {give_names} for {get_names}."
+
+    if their_benched_out:
+        closing = (
+            f"From your side you'd be moving someone who isn't starting for you "
+            f"anyway and filling a real hole. Happy to adjust if the shape isn't right."
+        )
+    else:
+        closing = (
+            "I think it genuinely helps us both - happy to adjust the pieces if "
+            "you'd rather shape it differently."
+        )
+
+    # Wrapped to a messaging-app measure so it can be pasted without reflowing
+    # into one unreadable line.
+    pitch = "\n\n".join(
+        "\n".join(textwrap.wrap(part, 72)) for part in (opening, body, offer, closing)
+    )
+    return TradeRationale(why=why, their_angle=their_angle, pitch=pitch)

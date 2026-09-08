@@ -293,3 +293,117 @@ def test_shortlist_is_position_aware(tmp_path):
     assert any(pid.startswith("rb") for pid in shortlist), "running backs must survive"
     assert sum(pid.startswith("qb") for pid in shortlist) <= 8
     conn.close()
+
+
+def _explained(mine, theirs, slots):
+    from fantasylineup.engine.trades import explain_trade
+
+    proposals = find_trades(mine, theirs, slots, 7, "Unc Show")
+    assert proposals
+    return proposals[0], explain_trade(proposals[0], mine, theirs, slots)
+
+
+def test_rationale_uses_each_player_own_position():
+    """A package can span two positions, and one count cannot describe both.
+
+    Reporting "Kittle and Montgomery start for them (they roster 2 at TE)"
+    attaches the tight end's depth to a running back. It is a claim the other
+    manager can check in ten seconds, and getting it wrong costs the offer.
+    """
+    mine = [
+        p("qb", "QB", 300.0),
+        p("te1", "TE", 240.0),
+        p("te2", "TE", 169.0),
+        p("rb1", "RB", 206.0),
+        p("rb2", "RB", 180.0),
+        p("rb3", "RB", 175.0),
+        p("wr1", "WR", 250.0),
+        p("wr2", "WR", 210.0),
+        p("wr3", "WR", 130.0),
+    ]
+    theirs = [
+        p("tqb", "QB", 300.0),
+        p("thenry", "RB", 247.0),
+        p("trb2", "RB", 120.0),
+        p("trb3", "RB", 110.0),
+        p("trb4", "RB", 100.0),
+        p("tte", "TE", 90.0),
+        p("twr1", "WR", 240.0),
+        p("twr2", "WR", 200.0),
+    ]
+    slots = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX"]
+    proposal, rationale = _explained(mine, theirs, slots)
+
+    # Every position claim must match the player it is attached to.
+    for player in proposal.give:
+        if player.name in rationale.their_angle:
+            segment = rationale.their_angle.split(player.name, 1)[1].split(";")[0]
+            assert f"at {player.position}" in segment, (
+                f"{player.name} ({player.position}) described with the wrong position"
+            )
+
+
+def test_pitch_is_wrapped_for_pasting():
+    """Unwrapped prose pastes into messaging apps as one unreadable line."""
+    mine = [
+        p("qb", "QB", 300.0),
+        p("te1", "TE", 240.0),
+        p("te2", "TE", 169.0),
+        p("rb1", "RB", 206.0),
+        p("wr1", "WR", 250.0),
+        p("wr2", "WR", 210.0),
+        p("wr3", "WR", 130.0),
+        p("wr4", "WR", 125.0),
+    ]
+    theirs = [
+        p("tqb", "QB", 300.0),
+        p("thenry", "RB", 247.0),
+        p("trb2", "RB", 120.0),
+        p("tte", "TE", 90.0),
+        p("twr1", "WR", 240.0),
+        p("twr2", "WR", 200.0),
+        p("twr3", "WR", 190.0),
+        p("twr4", "WR", 180.0),
+    ]
+    slots = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX"]
+    _, rationale = _explained(mine, theirs, slots)
+
+    assert all(len(line) <= 72 for line in rationale.pitch.split("\n"))
+    assert "Unc Show" in rationale.pitch
+    assert rationale.why and rationale.their_angle
+
+
+def test_pitch_names_only_players_in_the_deal():
+    """The message must not reference players who are not part of the offer.
+
+    Fabricating a name is the fastest way to make an otherwise sound proposal
+    look careless. Names here are deliberately distinct rather than sharing
+    prefixes, so a substring match cannot pass the check by accident.
+    """
+    mine = [
+        p("Alder", "QB", 300.0),
+        p("Bramble", "TE", 240.0),
+        p("Cedar", "TE", 169.0),
+        p("Dogwood", "RB", 206.0),
+        p("Elm", "WR", 250.0),
+        p("Fir", "WR", 210.0),
+        p("Gorse", "WR", 130.0),
+        p("Hazel", "WR", 125.0),
+    ]
+    theirs = [
+        p("Juniper", "QB", 300.0),
+        p("Kapok", "RB", 247.0),
+        p("Larch", "RB", 120.0),
+        p("Maple", "TE", 90.0),
+        p("Nutmeg", "WR", 240.0),
+        p("Olive", "WR", 200.0),
+        p("Poplar", "WR", 190.0),
+        p("Quince", "WR", 180.0),
+    ]
+    slots = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX"]
+    proposal, rationale = _explained(mine, theirs, slots)
+
+    involved = {x.name for x in proposal.give} | {x.name for x in proposal.get}
+    everyone = {x.name for x in mine} | {x.name for x in theirs}
+    for name in everyone - involved:
+        assert name not in rationale.pitch

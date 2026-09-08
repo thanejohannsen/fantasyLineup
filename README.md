@@ -25,6 +25,11 @@ hand in the app.
   he adds to *your* best legal lineup, which is zero for a fifth running back on
   a roster already starting four. Trades must improve both sides, or they get
   declined and the offer was wasted effort.
+- **Explains each trade and drafts the message.** Every offer comes with why it
+  helps you, why the other manager should say yes, and a sendable pitch. Each
+  claim is derived from roster state both managers can already see — a message
+  that misstates a roster the other person can check in ten seconds is worse
+  than no message, and it poisons the next offer too.
 - **Publishes a dashboard** to GitHub Pages, refreshed hourly by Actions.
 
 ## Quick start

@@ -60,7 +60,10 @@ table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nu
 td, th { padding: .32rem 0; text-align: left; border-bottom: 1px solid var(--line); }
 th { font-size: .68rem; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
 tr:last-child td { border-bottom: 0; }
-.slot { color: var(--muted); font-size: .8rem; width: 3.4rem; }
+.slot { color: var(--muted); font-size: .8rem; }
+/* The fixed width is a table-layout concern only; applying it to the inline
+   spans used in the trade cards squeezes them into a one-word column. */
+td.slot, th.slot { width: 3.4rem; }
 .num { text-align: right; font-variant-numeric: tabular-nums; width: 4rem; }
 .when { text-align: right; color: var(--muted); font-size: .78rem; width: 5rem; }
 .locked { color: var(--locked); }
@@ -68,6 +71,21 @@ tr:last-child td { border-bottom: 0; }
 .empty { color: var(--muted); font-style: italic; }
 .note { color: var(--muted); font-size: .82rem; margin-top: .8rem; }
 .scroll { overflow-x: auto; }
+.trade { border-top: 1px solid var(--line); padding: .8rem 0; }
+.trade:first-of-type { border-top: 0; padding-top: 0; }
+.tradehead { margin-bottom: .35rem; }
+.why { color: var(--muted); font-size: .84rem; margin: .5rem 0 0; }
+.pitchwrap { margin-top: .7rem; }
+.pitch {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 7px;
+  padding: .7rem .8rem; font: .82rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap; margin: .4rem 0 0; overflow-x: auto;
+}
+.copy {
+  background: none; border: 1px solid var(--line); color: var(--muted);
+  border-radius: 6px; padding: .2rem .55rem; font-size: .74rem; cursor: pointer;
+}
+.copy:hover { color: var(--ink); border-color: var(--muted); }
 """
 
 
@@ -96,6 +114,18 @@ _SCRIPT = """<script>
   }
   tick();
   setInterval(tick, 30000);
+
+  document.querySelectorAll(".copy").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var el = document.getElementById(btn.getAttribute("data-copy"));
+      if (!el) return;
+      navigator.clipboard.writeText(el.textContent).then(function () {
+        var was = btn.textContent;
+        btn.textContent = "Copied";
+        setTimeout(function () { btn.textContent = was; }, 1500);
+      });
+    });
+  });
 })();
 </script>"""
 
@@ -228,7 +258,7 @@ def render_dashboard(advisory: Advisory, team_name: str, moves_html: str = "") -
 """
 
 
-def render_moves_panel(targets, proposals) -> str:
+def render_moves_panel(targets, proposals, rationales=None) -> str:
     """Waiver and trade panel, appended to the dashboard."""
     parts = []
 
@@ -243,19 +273,33 @@ def render_moves_panel(targets, proposals) -> str:
         parts.append(f'<div class="panel"><h2>Waiver targets</h2><ul>{rows}</ul></div>')
 
     if proposals:
-        blocks = "".join(
-            f"<li><strong>{_esc(p.partner_name)}</strong> "
-            f'<span class="slot">[{_esc(p.shape)}]</span><br>'
-            f"send {_esc(', '.join(x.name for x in p.give))}<br>"
-            f"get {_esc(', '.join(x.name for x in p.get))}<br>"
-            f'<span class="slot">you +{p.my_gain:.0f}, them +{p.their_gain:.0f} '
-            f"rest-of-season pts</span></li>"
-            for p in proposals
-        )
+        rationales = rationales or {}
+        blocks = []
+        for i, p in enumerate(proposals):
+            r = rationales.get(i)
+            why = f'<p class="why"><b>Why:</b> {_esc(r.why)}</p>' if r else ""
+            angle = f'<p class="why"><b>Their side:</b> {_esc(r.their_angle)}</p>' if r else ""
+            pitch = ""
+            if r:
+                pitch = (
+                    f'<div class="pitchwrap">'
+                    f'<button class="copy" data-copy="pitch{i}">Copy message</button>'
+                    f'<pre class="pitch" id="pitch{i}">{_esc(r.pitch)}</pre></div>'
+                )
+            blocks.append(
+                f'<div class="trade"><div class="tradehead">'
+                f"<strong>{_esc(p.partner_name)}</strong> "
+                f'<span class="slot">[{_esc(p.shape)}]</span></div>'
+                f"<div>Send <b>{_esc(', '.join(x.name for x in p.give))}</b></div>"
+                f"<div>Get <b>{_esc(', '.join(x.name for x in p.get))}</b></div>"
+                f'<div class="slot">you +{p.my_gain:.0f}, them +{p.their_gain:.0f} '
+                f"rest-of-season pts</div>{why}{angle}{pitch}</div>"
+            )
         parts.append(
-            f'<div class="panel"><h2>Trade offers</h2><ul>{blocks}</ul>'
+            f'<div class="panel"><h2>Trade offers</h2>{"".join(blocks)}'
             f'<p class="note">Both sides gain, which is what makes an offer worth '
-            f"sending. Rest-of-season valuation.</p></div>"
+            f"sending. Every claim in these messages comes from roster data the "
+            f"other manager can already see.</p></div>"
         )
 
     return "".join(parts)

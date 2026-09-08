@@ -47,7 +47,10 @@ table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nu
 td, th { padding: .32rem 0; text-align: left; border-bottom: 1px solid var(--line); }
 th { font-size: .68rem; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
 tr:last-child td { border-bottom: 0; }
-.slot { color: var(--muted); font-size: .8rem; width: 3.4rem; }
+.slot { color: var(--muted); font-size: .8rem; }
+/* The fixed width is a table-layout concern only; applying it to the inline
+   spans used in the trade cards squeezes them into a one-word column. */
+td.slot, th.slot { width: 3.4rem; }
 .num { text-align: right; font-variant-numeric: tabular-nums; width: 4rem; }
 .when { text-align: right; color: var(--muted); font-size: .78rem; width: 5rem; }
 .locked { color: var(--locked); }
@@ -55,19 +58,59 @@ tr:last-child td { border-bottom: 0; }
 .empty { color: var(--muted); font-style: italic; }
 .note { color: var(--muted); font-size: .82rem; margin-top: .8rem; }
 .scroll { overflow-x: auto; }
+.trade { border-top: 1px solid var(--line); padding: .8rem 0; }
+.trade:first-of-type { border-top: 0; padding-top: 0; }
+.tradehead { margin-bottom: .35rem; }
+.why { color: var(--muted); font-size: .84rem; margin: .5rem 0 0; }
+.pitchwrap { margin-top: .7rem; }
+.pitch {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 7px;
+  padding: .7rem .8rem; font: .82rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap; margin: .4rem 0 0; overflow-x: auto;
+}
+.copy {
+  background: none; border: 1px solid var(--line); color: var(--muted);
+  border-radius: 6px; padding: .2rem .55rem; font-size: .74rem; cursor: pointer;
+}
+.copy:hover { color: var(--ink); border-color: var(--muted); }
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>ZOO + PEARL</h1>
-  <div class="sub">Updated Tue 08 Sep 2026, 15:09 UTC &middot; <span class="when" data-kickoff="2026-09-11T00:35:00+00:00">Next lock in 2d 9h (Fri 00:35 UTC)</span></div>
-  <div class="panel"><h2>Week 1 vs jakered47</h2><div class="headline">58% <small>win probability</small></div><div class="posture">close matchup: maximise expected points</div><div class="note">Projected 132 pts (103-163, 10th-90th percentile)</div></div>
+  <div class="sub">Updated Tue 08 Sep 2026, 15:32 UTC &middot; <span class="when" data-kickoff="2026-09-11T00:35:00+00:00">Next lock in 2d 9h (Fri 00:35 UTC)</span></div>
+  <div class="panel"><h2>Week 1 vs jakered47</h2><div class="headline">57% <small>win probability</small></div><div class="posture">close matchup: maximise expected points</div><div class="note">Projected 132 pts (104-163, 10th-90th percentile)</div></div>
   <div class="panel"><h2>Lineup</h2><p>Your current lineup is already optimal. Nothing to change.</p></div>
   <div class="panel"><h2>Recommended lineup</h2><div class="scroll"><table>
     <tr><th>Slot</th><th>Player</th><th class="num">Proj</th><th class="when">Locks</th></tr>
-    <tr><td class="slot">QB</td><td>Jayden Daniels <span class="slot">vs PHI</span></td><td class="num">17.9</td><td class="when" data-kickoff="2026-09-13T20:25:00+00:00">5d 5h</td></tr><tr><td class="slot">RB</td><td>Bijan Robinson <span class="slot">vs PIT</span></td><td class="num">21.4</td><td class="when" data-kickoff="2026-09-13T17:00:00+00:00">5d 1h</td></tr><tr><td class="slot">RB</td><td>David Montgomery <span class="slot">vs BUF</span></td><td class="num">13.9</td><td class="when" data-kickoff="2026-09-13T17:00:00+00:00">5d 1h</td></tr><tr><td class="slot">WR</td><td>Drake London <span class="slot">vs PIT</span></td><td class="num">14.8</td><td class="when" data-kickoff="2026-09-13T17:00:00+00:00">5d 1h</td></tr><tr><td class="slot">WR</td><td>Parker Washington <span class="slot">vs CLE</span></td><td class="num">11.9</td><td class="when" data-kickoff="2026-09-13T17:00:00+00:00">5d 1h</td></tr><tr><td class="slot">TE</td><td>Trey McBride <span class="slot">vs LAC</span></td><td class="num">15.6</td><td class="when" data-kickoff="2026-09-13T20:25:00+00:00">5d 5h</td></tr><tr><td class="slot">FLEX</td><td>Rico Dowdle <span class="slot">vs ATL</span></td><td class="num">12.5</td><td class="when" data-kickoff="2026-09-13T17:00:00+00:00">5d 1h</td></tr><tr><td class="slot">FLEX</td><td>Rachaad White <span class="slot">vs PHI</span></td><td class="num">10.2</td><td class="when" data-kickoff="2026-09-13T20:25:00+00:00">5d 5h</td></tr><tr><td class="slot">K</td><td>Brandon Aubrey <span class="slot">vs NYG</span></td><td class="num">6.8</td><td class="when" data-kickoff="2026-09-14T00:20:00+00:00">5d 9h</td></tr><tr><td class="slot">DEF</td><td>Los Angeles Rams <span class="slot">vs SF</span></td><td class="num">7.1</td><td class="when" data-kickoff="2026-09-11T00:35:00+00:00">2d 9h</td></tr>
+    <tr><td class="slot">QB</td><td>Jayden Daniels <span class="slot">vs PHI</span></td><td class="num">17.9</td><td class="when" data-kickoff="2026-09-13T20:25:00+00:00">5d 4h</td></tr><tr><td class="slot">RB</td><td>Bijan Robinson <span class="slot">vs PIT</span></td><td class="num">21.4</td><td class="when" data-kickoff="2026-09-13T17:00:00+00:00">5d 1h</td></tr><tr><td class="slot">RB</td><td>David Montgomery <span class="slot">vs BUF</span></td><td class="num">13.9</td><td class="when" data-kickoff="2026-09-13T17:00:00+00:00">5d 1h</td></tr><tr><td class="slot">WR</td><td>Drake London <span class="slot">vs PIT</span></td><td class="num">14.8</td><td class="when" data-kickoff="2026-09-13T17:00:00+00:00">5d 1h</td></tr><tr><td class="slot">WR</td><td>Parker Washington <span class="slot">vs CLE</span></td><td class="num">11.9</td><td class="when" data-kickoff="2026-09-13T17:00:00+00:00">5d 1h</td></tr><tr><td class="slot">TE</td><td>Trey McBride <span class="slot">vs LAC</span></td><td class="num">15.6</td><td class="when" data-kickoff="2026-09-13T20:25:00+00:00">5d 4h</td></tr><tr><td class="slot">FLEX</td><td>Rico Dowdle <span class="slot">vs ATL</span></td><td class="num">12.5</td><td class="when" data-kickoff="2026-09-13T17:00:00+00:00">5d 1h</td></tr><tr><td class="slot">FLEX</td><td>Rachaad White <span class="slot">vs PHI</span></td><td class="num">10.2</td><td class="when" data-kickoff="2026-09-13T20:25:00+00:00">5d 4h</td></tr><tr><td class="slot">K</td><td>Brandon Aubrey <span class="slot">vs NYG</span></td><td class="num">6.8</td><td class="when" data-kickoff="2026-09-14T00:20:00+00:00">5d 8h</td></tr><tr><td class="slot">DEF</td><td>Los Angeles Rams <span class="slot">vs SF</span></td><td class="num">7.1</td><td class="when" data-kickoff="2026-09-11T00:35:00+00:00">2d 9h</td></tr>
   </table></div></div>
-  <div class="panel"><h2>Trade offers</h2><ul><li><strong>Unc Show</strong> <span class="slot">[2-for-1]</span><br>send George Kittle, David Montgomery<br>get Derrick Henry<br><span class="slot">you +27, them +6 rest-of-season pts</span></li><li><strong>Ryan Criblett</strong> <span class="slot">[1-for-1]</span><br>send George Kittle<br>get Alec Pierce<br><span class="slot">you +9, them +1 rest-of-season pts</span></li><li><strong>DomesticTofu</strong> <span class="slot">[1-for-1]</span><br>send George Kittle<br>get Jaylen Waddle<br><span class="slot">you +7, them +5 rest-of-season pts</span></li></ul><p class="note">Both sides gain, which is what makes an offer worth sending. Rest-of-season valuation.</p></div>
+  <div class="panel"><h2>Trade offers</h2><div class="trade"><div class="tradehead"><strong>Unc Show</strong> <span class="slot">[2-for-1]</span></div><div>Send <b>George Kittle, David Montgomery</b></div><div>Get <b>Derrick Henry</b></div><div class="slot">you +27, them +6 rest-of-season pts</div><p class="why"><b>Why:</b> Derrick Henry starts for you immediately. Worth +27 points rest of season.</p><p class="why"><b>Their side:</b> George Kittle starts for them (they roster 2 at TE); David Montgomery starts for them (they roster 4 at RB). Worth +6 to them.</p><div class="pitchwrap"><button class="copy" data-copy="pitch0">Copy message</button><pre class="pitch" id="pitch0">Hey Unc Show - interested in a trade?
+
+I&#x27;m carrying more depth than I can start, so I&#x27;d rather consolidate two
+players into one I can actually use. You&#x27;d be getting two contributors
+back for one.
+
+I&#x27;d send George Kittle and David Montgomery for Derrick Henry.
+
+I think it genuinely helps us both - happy to adjust the pieces if you&#x27;d
+rather shape it differently.</pre></div></div><div class="trade"><div class="tradehead"><strong>Ryan Criblett</strong> <span class="slot">[1-for-1]</span></div><div>Send <b>George Kittle</b></div><div>Get <b>Alec Pierce</b></div><div class="slot">you +9, them +3 rest-of-season pts</div><p class="why"><b>Why:</b> Alec Pierce starts for you immediately. Worth +9 points rest of season.</p><p class="why"><b>Their side:</b> George Kittle starts for them (they roster 1 at TE). Worth +3 to them.</p><div class="pitchwrap"><button class="copy" data-copy="pitch1">Copy message</button><pre class="pitch" id="pitch1">Hey Ryan Criblett - interested in a trade?
+
+Alec Pierce would slot straight into my lineup, and looking at your
+roster I think George Kittle does the same for you.
+
+I&#x27;d send George Kittle for Alec Pierce.
+
+I think it genuinely helps us both - happy to adjust the pieces if you&#x27;d
+rather shape it differently.</pre></div></div><div class="trade"><div class="tradehead"><strong>DomesticTofu</strong> <span class="slot">[1-for-1]</span></div><div>Send <b>George Kittle</b></div><div>Get <b>Jaylen Waddle</b></div><div class="slot">you +7, them +5 rest-of-season pts</div><p class="why"><b>Why:</b> Jaylen Waddle starts for you immediately. Worth +7 points rest of season.</p><p class="why"><b>Their side:</b> George Kittle starts for them (they roster 2 at TE). Worth +5 to them.</p><div class="pitchwrap"><button class="copy" data-copy="pitch2">Copy message</button><pre class="pitch" id="pitch2">Hey DomesticTofu - interested in a trade?
+
+Jaylen Waddle would slot straight into my lineup, and looking at your
+roster I think George Kittle does the same for you.
+
+I&#x27;d send George Kittle for Jaylen Waddle.
+
+I think it genuinely helps us both - happy to adjust the pieces if you&#x27;d
+rather shape it differently.</pre></div></div><p class="note">Both sides gain, which is what makes an offer worth sending. Every claim in these messages comes from roster data the other manager can already see.</p></div>
   <div class="panel"><h2>How to read this</h2>
     <p class="note">Projections blend Sleeper with Kalshi prop markets, capped by how much
     of a player's scoring the market actually prices. There is no rushing-yards market,
@@ -99,6 +142,18 @@ tr:last-child td { border-bottom: 0; }
   }
   tick();
   setInterval(tick, 30000);
+
+  document.querySelectorAll(".copy").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var el = document.getElementById(btn.getAttribute("data-copy"));
+      if (!el) return;
+      navigator.clipboard.writeText(el.textContent).then(function () {
+        var was = btn.textContent;
+        btn.textContent = "Copied";
+        setTimeout(function () { btn.textContent = was; }, 1500);
+      });
+    });
+  });
 })();
 </script>
 </body>
