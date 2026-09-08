@@ -79,6 +79,29 @@ Coverage is uneven, and the report says so rather than implying otherwise:
 Sleeper is the anchor; the market adjusts it within a cap scaled by how much of a
 player's scoring it actually prices.
 
+## Learning from results
+
+`fl calibrate` refits per-position spread and bias on completed weeks, grading
+the projection **stored at decision time** rather than one recomputed later,
+which would leak hindsight. `fl calibrate --backtest` replays 2025 and
+reproduces the shipped coefficients exactly from raw data.
+
+Ten starters a week is far too small a sample to learn from, but the model
+projects the whole NFL, so each completed week yields around two thousand
+projection-and-outcome pairs. That supports fitting a handful of parameters and
+nothing more. Per-player predictive models from one season of a twelve-team
+league would be overfitting, and are not attempted.
+
+**Whether the Kalshi blend actually beats Sleeper alone is not yet known, and
+cannot be established retroactively.** Kalshi retains no usable pre-kickoff
+history: settled markets return an empty book, candlesticks come back empty for
+them, and every settled NFL prop market in existence is from 2026 -- the series
+did not exist during the 2025 season. The comparison needs several weeks of live
+data. Until then the capped, Sleeper-anchored blend is a deliberately
+conservative default, not a measured improvement.
+
+Measured on 2025: Sleeper MAE 4.06 points, bias -0.02 over 6,809 observations.
+
 ## Known limitations
 
 - **Players are simulated independently.** A quarterback and his receiver rise

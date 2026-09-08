@@ -120,7 +120,11 @@ def render_dashboard(advisory: Advisory, team_name: str, moves_html: str = "") -
         when = (
             "locked"
             if state.locked
-            else ("bye" if state.kickoff_utc is None else format_countdown(state.kickoff_utc, a.generated_at))
+            else (
+                "bye"
+                if state.kickoff_utc is None
+                else format_countdown(state.kickoff_utc, a.generated_at)
+            )
         )
         cls = ' class="locked"' if state.locked else ""
         opp = f"vs {_esc(player.opponent)}" if player.opponent else ""

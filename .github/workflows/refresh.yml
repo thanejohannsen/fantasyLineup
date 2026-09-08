@@ -56,6 +56,16 @@ jobs:
         run: |
           fl refresh ${{ inputs.with_moves && '--with-moves' || '' }}
 
+      # Tuesday morning: recap the completed week, then refit the model on it.
+      # Lands before the league's Tuesday waiver run, so it doubles as claim prep.
+      - name: Tuesday recap and calibration
+        if: ${{ github.event_name == 'schedule' }}
+        run: |
+          if [ "$(date -u +%u)" = "2" ] && [ "$(date -u +%H)" = "13" ]; then
+            fl recap
+            fl calibrate
+          fi
+
       - name: Save data cache
         uses: actions/cache/save@v4
         if: always()

@@ -21,9 +21,13 @@ misprice the position with the highest projections on the roster.
 of 0.33 to 0.41, so a 17-point running back is roughly two and a half times as
 uncertain as a 3-point one.
 
-Sleeper's in-season projections were close to unbiased: mean residuals sat
-within a point of zero in every position and projection band, so no bias
-correction is applied here.
+Sleeper's in-season projections were close to unbiased across the whole 2025
+season -- mean residual -0.02 points over 6,809 observations, with MAE 4.06 --
+so no bias correction is applied here.
+
+Every coefficient below is reproduced exactly by ``fl calibrate --backtest``,
+which refits them from raw data. They are defaults, not constants: the
+calibration step overwrites them from live results as the season accumulates.
 """
 
 from __future__ import annotations
@@ -39,8 +43,8 @@ POSITION_VARIANCE: dict[str, tuple[float, float, float]] = {
     "RB": (2.85, 0.337, 1.5),
     "WR": (3.20, 0.329, 1.5),
     "TE": (2.51, 0.412, 1.2),
-    "K": (3.60, 0.150, 1.5),
-    "DEF": (4.40, 0.204, 2.0),
+    "K": (4.30, 0.048, 1.5),
+    "DEF": (4.43, 0.200, 2.0),
 }
 
 # Used when a player's position is unknown or unfitted; deliberately wide.

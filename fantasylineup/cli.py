@@ -11,6 +11,12 @@ from .db import open_db
 from .engine.lineup import starting_slots
 from .engine.trades import best_trades_across_league
 from .engine.waivers import explain_no_targets, rank_waiver_targets, shortlist_candidates
+from .model.calibration import (
+    fit_variance,
+    load_observations,
+    save_params,
+    score_source,
+)
 from .model.projections import REST_OF_SEASON, latest_projections, sync_projections
 from .pipeline import (
     all_rosters,
@@ -382,6 +388,75 @@ def cmd_recap(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_calibrate(args: argparse.Namespace) -> int:
+    """Refit the model on completed weeks and version the result.
+
+    With --backtest, replays the 2025 season from scratch. That measures the
+    Sleeper baseline only: Kalshi kept no usable pre-kickoff history and its NFL
+    prop series did not exist in 2025, so whether the blend helps can only be
+    answered prospectively as 2026 weeks accumulate.
+    """
+    cfg = load_config(args.config)
+    cfg.paths.ensure()
+
+    season = 2025 if args.backtest else cfg.league.season
+    weeks = list(range(1, (args.through or 18) + 1))
+
+    with open_db(cfg.paths.db) as conn, SleeperClient(
+        cfg.sources.sleeper_base,
+        cfg.paths.cache,
+        max_calls_per_min=cfg.sources.max_calls_per_min,
+    ) as client:
+        league = load_league(conn, cfg.league.league_id)
+        scoring = league["scoring_settings"]
+
+        if args.backtest:
+            for week in weeks:
+                sync_projections(conn, client, season, week, scoring)
+                sync_actuals(conn, client, season, week, scoring)
+
+        observations = load_observations(conn, season, weeks)
+        if not observations:
+            print(f"No completed weeks with stored projections for {season}.")
+            print("Projections are graded as stored at decision time, so they")
+            print("cannot be reconstructed after the fact. Run `fl refresh`")
+            print("before each slate and this fills in as the season goes.")
+            return 0
+
+        baseline = score_source(observations)
+        blend = score_source(load_observations(conn, season, weeks, source="blend"))
+        variance = fit_variance(observations)
+        version = save_params(
+            conn,
+            variance,
+            {"sleeper": baseline, **({"blend": blend} if blend.n else {})},
+            through_week=max(weeks),
+            notes="backtest 2025" if args.backtest else f"in-season {season}",
+        )
+
+    print(f"Calibration v{version} - {season}, {len(observations)} observations")
+    print()
+    print("ACCURACY")
+    print(f"  {baseline.describe()}")
+    if blend.n:
+        print(f"  {blend.describe()}")
+    else:
+        print("  blend      no stored history yet - see note below")
+    print()
+    print("FITTED SPREAD  sd = intercept + slope * projection")
+    for position in ("QB", "RB", "WR", "TE", "K", "DEF"):
+        if position in variance:
+            intercept, slope = variance[position]
+            print(f"  {position:4} {intercept:6.2f} + {slope:6.3f} x proj")
+    print()
+    if not blend.n:
+        print("The Kalshi blend has no measurable track record yet, and cannot")
+        print("get one retroactively: settled markets return an empty book and")
+        print("every NFL prop market in existence is from 2026. Expect a few")
+        print("weeks of live data before the comparison means anything.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="fl", description="Lock-aware Sleeper lineup, waiver and trade advisor"
@@ -424,6 +499,11 @@ def main(argv: list[str] | None = None) -> int:
     p_recap = sub.add_parser("recap", help="last week's results and what to learn")
     p_recap.add_argument("-w", "--week", type=int, default=None)
     p_recap.set_defaults(func=cmd_recap)
+
+    p_cal = sub.add_parser("calibrate", help="refit the model on completed weeks")
+    p_cal.add_argument("--backtest", action="store_true", help="replay the 2025 season")
+    p_cal.add_argument("--through", type=int, default=None, help="last week to include")
+    p_cal.set_defaults(func=cmd_calibrate)
 
     args = parser.parse_args(argv)
     _setup_logging(args.verbose)

@@ -167,3 +167,46 @@ def test_posture_labels():
     assert "favourite" in posture(0.80)
     assert "underdog" in posture(0.20)
     assert "close" in posture(0.50)
+
+
+def test_calibration_refits_the_shipped_defaults():
+    """The shipped coefficients must be what the fitter produces.
+
+    Guards against the constants and the calibration path drifting apart --
+    a divergence that would otherwise show up only as slowly wrong advice.
+    """
+    from fantasylineup.model.calibration import Observation, fit_variance
+    from fantasylineup.model.variance import POSITION_VARIANCE
+
+    rng = np.random.default_rng(7)
+    observations = []
+    for position, (intercept, slope, _floor) in POSITION_VARIANCE.items():
+        for _ in range(1200):
+            projected = float(rng.uniform(2, 22))
+            sd = intercept + slope * projected
+            observations.append(
+                Observation(position, projected, projected + rng.normal(0, sd), "sleeper")
+            )
+
+    fitted = fit_variance(observations)
+    for position, (intercept, slope, _floor) in POSITION_VARIANCE.items():
+        got_intercept, got_slope = fitted[position]
+        assert abs(got_intercept - intercept) < 1.5, position
+        assert abs(got_slope - slope) < 0.12, position
+
+
+def test_calibration_scores_a_perfect_source_at_zero():
+    from fantasylineup.model.calibration import Observation, score_source
+
+    perfect = [Observation("WR", 10.0, 10.0, "oracle") for _ in range(50)]
+    score = score_source(perfect)
+    assert score.mae == 0.0 and score.bias == 0.0 and score.n == 50
+
+
+def test_calibration_detects_a_biased_source():
+    from fantasylineup.model.calibration import Observation, score_source
+
+    optimistic = [Observation("RB", 12.0, 9.0, "hype") for _ in range(80)]
+    score = score_source(optimistic)
+    assert score.bias == pytest.approx(-3.0)
+    assert score.mae == pytest.approx(3.0)
