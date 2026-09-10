@@ -15,6 +15,7 @@ from fantasylineup.model.health import (
     classify,
     is_structural,
     ros_multiplier,
+    weekly_multiplier,
 )
 
 # (status, body_part, notes, has_weekly_projection)
@@ -162,3 +163,98 @@ def test_disclosure_capitalises_proper_nouns():
     assert "Achilles" in classify(*KITTLE).sentence("George Kittle")
     # Common nouns still read naturally in lower case.
     assert "a knee issue" in classify(*CHASE).sentence("Ja'Marr Chase")
+
+
+# ------------------------------------------------- weekly availability
+
+
+def test_a_player_ruled_out_is_worth_nothing_this_week():
+    """The bug: Sleeper's projections endpoint keeps a full number for him.
+
+    Its app shows zero, so the discrepancy is invisible unless you read the raw
+    feed. Sampled live: Sam Darnold 17.1 while Out with a hip injury, Brock
+    Bowers 16.0 while Doubtful after meniscus surgery. Left alone the optimiser
+    started a doubtful tight end over a healthy one.
+    """
+    out = classify("Out", "Hip", None, has_weekly_projection=True)
+    assert weekly_multiplier(out) == 0.0
+
+
+def test_long_term_designations_are_also_zero_for_the_week():
+    for status in ("IR", "PUP", "NA", "Sus", "DNR"):
+        health = classify(status, "Knee", None, has_weekly_projection=False)
+        assert weekly_multiplier(health) == 0.0, status
+
+
+def test_doubtful_is_near_zero_but_not_zero():
+    health = classify("Doubtful", "Knee - Meniscus", "Surgery", has_weekly_projection=True)
+    assert 0.0 < weekly_multiplier(health) < 0.25
+
+
+def test_questionable_keeps_most_of_his_value():
+    """Most questionable players suit up; benching them all would be worse.
+
+    This is the number to calibrate first, and the one place where the
+    module's argument against blunt use of `injury_status` does not apply:
+    for a single week the designation is a statement about availability.
+    """
+    health = classify("Questionable", "Ankle", None, has_weekly_projection=True)
+    assert 0.7 <= weekly_multiplier(health) <= 0.9
+
+
+def test_an_undesignated_player_is_untouched():
+    assert weekly_multiplier(classify(None, None, None, has_weekly_projection=True)) == 1.0
+
+
+def test_an_unrecognised_designation_is_not_treated_as_healthy():
+    """A new upstream code should not silently become full value."""
+    health = classify("Probable", "Ankle", None, has_weekly_projection=True)
+    assert weekly_multiplier(health) < 1.0
+
+
+def test_the_weekly_and_season_haircuts_are_different_questions():
+    """A player back from surgery and playing keeps season value but is
+    still a weekly risk while carrying a designation; one who is out for a
+    week keeps season value that the weekly number must not."""
+    playing_back = classify("Questionable", "Achilles", "Surgery", has_weekly_projection=True)
+    assert ros_multiplier(playing_back) > 0.5
+    assert weekly_multiplier(playing_back) < 1.0
+
+
+def test_grading_a_finished_week_is_not_haircut_by_today_s_designation():
+    """Calibration must score the projection that was acted on.
+
+    The weekly haircut is on by default so a new forward-looking caller is safe,
+    which makes the recap the one place it has to be turned off: an injury
+    designation carried today says nothing about who was available in a week
+    already played, and applying it would quietly bias the fit that grades the
+    model.
+    """
+    import sqlite3
+
+    from fantasylineup.db import init_db
+    from fantasylineup.pipeline import blended_projections
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    init_db(conn)
+    conn.execute(
+        """INSERT INTO players (sleeper_id, full_name, position, fantasy_positions,
+                                team, injury_status, updated_at)
+           VALUES ('1', 'Ruled Out', 'TE', '["TE"]', 'LV', 'Out', '2026-09-10')"""
+    )
+    conn.execute(
+        """INSERT INTO projections (source, season, week, sleeper_id, as_of, mean, stats)
+           VALUES ('sleeper', 2026, 1, '1', '2026-09-10', 16.0, '{"rec": 6.0}')"""
+    )
+    conn.commit()
+
+    scoring = {"rec": 1.0}
+    forward, _ = blended_projections(conn, {"1"}, 2026, 1, scoring, {}, 0.0)
+    graded, _ = blended_projections(
+        conn, {"1"}, 2026, 1, scoring, {}, 0.0, apply_weekly_health=False
+    )
+    conn.close()
+
+    assert forward[0].points == 0.0, "a forward-looking week must rule him out"
+    assert graded[0].points == pytest.approx(6.0), "a finished week keeps what was projected"

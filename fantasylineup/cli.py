@@ -154,6 +154,7 @@ def cmd_advise(args: argparse.Namespace) -> int:
             scoring,
             fits,
             cfg.model.kalshi_max_shift,
+            availability=cfg.health.availability(),
         )
 
         matchup = find_opponent(conn, client, cfg.league.league_id, roster_id, week)
@@ -172,6 +173,7 @@ def cmd_advise(args: argparse.Namespace) -> int:
                 scoring,
                 fits,
                 cfg.model.kalshi_max_shift,
+                availability=cfg.health.availability(),
             )
             # We cannot know what they will actually start, so assume they play
             # their best legal lineup. Assuming less would flatter our own odds.
@@ -424,6 +426,7 @@ def cmd_refresh(args: argparse.Namespace) -> int:
                 weekly[rid] = blended_projections(
                     conn, league_rosters.get(rid, set()), cfg.league.season, week,
                     scoring, fits, cfg.model.kalshi_max_shift,
+                    availability=cfg.health.availability(),
                 )
             return weekly[rid]
 
@@ -583,7 +586,8 @@ def cmd_recap(args: argparse.Namespace) -> int:
         # recomputed: grading a past week with today's data would leak hindsight
         # and make the measured accuracy meaningless.
         players, _ = blended_projections(
-            conn, avail.my_players, cfg.league.season, week, scoring, {}, 0.0
+            conn, avail.my_players, cfg.league.season, week, scoring, {}, 0.0,
+            apply_weekly_health=False,
         )
         matchup = find_opponent(conn, client, cfg.league.league_id, cfg.league.roster_id, week)
         recap = build_recap(

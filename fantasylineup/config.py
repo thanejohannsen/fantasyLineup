@@ -61,13 +61,17 @@ class TradesConfig:
 
 @dataclass(frozen=True)
 class HealthConfig:
-    """Rest-of-season multipliers per injury regime."""
+    """Injury multipliers: rest-of-season regimes, and weekly availability."""
 
     healthy: float = 1.00
     playing_diminished_structural: float = 0.90
     playing_diminished_soft: float = 1.00
     out_short: float = 0.40
     out_long: float = 0.00
+    # Chance a player carrying each designation actually plays this week.
+    weekly_out: float = 0.00
+    weekly_doubtful: float = 0.10
+    weekly_questionable: float = 0.80
 
     def as_table(self) -> dict[str, float]:
         return {
@@ -76,6 +80,14 @@ class HealthConfig:
             "playing_diminished_soft": self.playing_diminished_soft,
             "out_short": self.out_short,
             "out_long": self.out_long,
+        }
+
+    def availability(self) -> dict[str, float]:
+        return {
+            "out": self.weekly_out,
+            "doubtful": self.weekly_doubtful,
+            "questionable": self.weekly_questionable,
+            "healthy": 1.00,
         }
 
 

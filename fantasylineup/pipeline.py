@@ -16,7 +16,14 @@ from .engine.lineup import PlayerProjection, starting_slots
 from .engine.simulate import LiveState
 from .engine.locks import locked_slot_assignments, player_lock_states
 from .model.blend import BlendResult, blend_player, fit_ladders, group_quotes
-from .model.health import HealthStatus, Regime, classify, is_structural, ros_multiplier
+from .model.health import (
+    HealthStatus,
+    Regime,
+    classify,
+    is_structural,
+    ros_multiplier,
+    weekly_multiplier,
+)
 from .model.projections import REST_OF_SEASON, latest_projections
 from .model.variance import VarianceModel, default_model
 from .sources.kalshi import KalshiClient
@@ -116,6 +123,8 @@ def blended_projections(
     max_shift: float,
     health_multipliers: Mapping[str, float] | None = None,
     weekly_week: int | None = None,
+    availability: Mapping[str, float] | None = None,
+    apply_weekly_health: bool = True,
 ) -> tuple[list[PlayerProjection], dict[str, BlendResult]]:
     """Build optimizer inputs with Kalshi folded into the Sleeper baseline.
 
@@ -123,11 +132,13 @@ def blended_projections(
     every command shares, so no caller can accidentally reason about a
     season-ending injury as though the player were available.
 
-    They apply to rest-of-season projections only. Weekly projections need no
-    haircut: Sleeper simply omits a player who is not playing, so an unavailable
-    player already arrives at zero. Rest-of-season numbers carry no such
-    treatment -- one quarterback was priced at 143 points while out for the year
-    with a reconstructed ACL.
+    Both horizons need one, for different reasons. Rest-of-season numbers carry
+    no injury treatment at all -- one quarterback was priced at 143 points while
+    out for the year with a reconstructed ACL. Weekly numbers carry it only for
+    long-term designations: a player on IR or PUP has no weekly record and
+    arrives at zero, but one designated Out or Doubtful keeps a full projection,
+    which is how a doubtful tight end reached a recommended lineup at face
+    value.
     """
     if not player_ids:
         return [], {}
@@ -190,6 +201,17 @@ def blended_projections(
         points = blend.blended
         if is_ros:
             points *= ros_multiplier(health, health_multipliers)
+        elif apply_weekly_health:
+            # Sleeper's weekly projection assumes he plays, and for Out and
+            # Doubtful players it keeps assuming that. Left alone it puts a
+            # player his own manager can see is ruled out into the lineup.
+            #
+            # On by default so that a new forward-looking caller is safe. The
+            # one caller that turns it off is the recap, which grades a
+            # completed week: today's designation says nothing about who was
+            # available then, and applying it would corrupt the calibration it
+            # feeds.
+            points *= weekly_multiplier(health, availability)
 
         import json as _json
 

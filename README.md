@@ -178,7 +178,23 @@ for the year with a reconstructed ACL, and Tyreek Hill 93.7, while George Kittle
 who is actually playing after Achilles surgery, carried 169.3 -- a number that
 already reflects his reduced role.
 
-So the split is on whether a current-week projection exists:
+**Weekly projections are only partly injury-aware, and the gap is the one that
+matters for a start/sit.** A player on IR, PUP or NA has no weekly record and
+arrives at zero on his own. A player designated **Out** or **Doubtful** keeps a
+full one: sampled live, Brock Bowers carried 16.0 for the week while Doubtful
+after meniscus surgery, and Sam Darnold 17.1 while Out. Sleeper's *app* shows
+them at zero; the projections endpoint does not. Until this was caught, the
+optimiser recommended starting a doubtful tight end over a healthy one.
+
+So weekly projections are scaled by the chance the designation lets him play --
+zero for Out and the long-term codes, near zero for Doubtful, most of his value
+for Questionable. That last is the weakest number and the first to calibrate:
+most questionable players do suit up. It is deliberately *not* the blanket
+haircut argued against below, which concerns season-long value; for a single
+week the designation is precisely a statement about availability.
+
+For rest-of-season value the split is on whether a current-week projection
+exists:
 
 | Regime | Meaning | ROS multiplier |
 | --- | --- | --- |
@@ -294,7 +310,7 @@ generates would be breaking new ground, which is also why the pitch text matters
 ## Development
 
 ```bash
-.venv/bin/python -m pytest        # 144 tests, no network required
+.venv/bin/python -m pytest        # 152 tests, no network required
 ```
 
 Tests run against captured real API responses in `fixtures/`, so they fail if an

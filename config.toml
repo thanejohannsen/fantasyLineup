@@ -43,8 +43,7 @@ require_stable = true  # drop offers whose 10th percentile gain is negative
 min_games_for_contingency = 3
 
 [health]
-# Rest-of-season multipliers by injury regime. Weekly projections need no
-# haircut -- Sleeper already omits players who are not playing.
+# Rest-of-season multipliers by injury regime.
 #
 # These are literature-informed judgment, not fitted values. Achilles ruptures
 # return at a mean of 10.9 months and ACL reconstructions at 13.6, both beyond
@@ -57,3 +56,17 @@ playing_diminished_structural = 0.90
 playing_diminished_soft = 1.00
 out_short = 0.40
 out_long = 0.00
+
+# Chance a player carrying each designation actually plays this week. Sleeper's
+# app zeroes these players; its projections endpoint does not, so without this a
+# player ruled out keeps his full weekly number and can be recommended as a
+# starter. Sampled live: Brock Bowers 16.0 while Doubtful after meniscus
+# surgery, Sam Darnold 17.1 while Out.
+#
+# out is definitional rather than judged -- he is not playing. doubtful follows
+# the NFL's own "unlikely to play". questionable is the weakest number here and
+# the first to calibrate: most questionable players do suit up, so too harsh a
+# figure benches stars for knocks they play through.
+weekly_out = 0.00
+weekly_doubtful = 0.10
+weekly_questionable = 0.80

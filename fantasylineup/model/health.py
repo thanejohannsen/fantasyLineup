@@ -3,15 +3,24 @@
 The discriminator is **availability, not severity**, and that comes from the
 data rather than from a table of body parts.
 
-Sleeper's *weekly* projections already price injury: a player who is not going
-to play simply has no weekly record. Its *rest-of-season* projections do not.
+Sleeper's *rest-of-season* projections do not price injury at all.
 Sampled live, Michael Penix carried 143.2 rest-of-season points while out with a
 reconstructed ACL, and Tyreek Hill 93.7 in the same state -- while George Kittle,
 who is actually playing after Achilles surgery, carried 169.3, a figure that
 already reflects his reduced role. Discounting all three the same way would be
 as wrong as discounting none of them.
 
-So the split is on whether a current-week projection exists:
+Its *weekly* projections price it only partly, and the exception is the one
+that matters for a start/sit. A player on IR, PUP or NA has no weekly record and
+so arrives at zero on his own. A player designated **Out** or **Doubtful** keeps
+a full one: sampled live, Brock Bowers carried 16.0 for the week while Doubtful
+after meniscus surgery, and Sam Darnold 17.1 while Out. Sleeper's *app* shows
+those players at zero; the projections endpoint does not, so the haircut has to
+be applied here. Assuming otherwise put a doubtful tight end into a recommended
+lineup at full value.
+
+For the rest-of-season regime the split is on whether a current-week projection
+exists:
 
 *Playing with a designation* means he is back from a prior injury, and the
 rest-of-season number already reflects it. He is worth something, and he is
@@ -76,14 +85,36 @@ class Regime(str, Enum):
     OUT_LONG = "out_long"
 
 
-# Rest-of-season multipliers. Weekly projections need no haircut: Sleeper
-# already omits players who are not playing.
+# Rest-of-season multipliers. The weekly haircut is separate, below.
 DEFAULT_MULTIPLIERS: dict[str, float] = {
     "healthy": 1.00,
     "playing_diminished_structural": 0.90,
     "playing_diminished_soft": 1.00,
     "out_short": 0.40,
     "out_long": 0.00,
+}
+
+
+# Probability a player carrying each designation actually takes the field. A
+# weekly projection is conditional on playing, so this is what turns it into an
+# expectation.
+#
+# "Out" and the long-term designations are definitional rather than judged: the
+# player is not playing, and the value is zero. The other two are judgment.
+# Doubtful is the NFL's "unlikely to play" and empirically very few do.
+# Questionable is the weakest number here and the one to calibrate first --
+# most questionable players suit up, so a heavy haircut would bench stars for
+# knocks they play through.
+#
+# This is deliberately *not* the blanket haircut argued against above. That
+# argument is about rest-of-season value, where a designation says little about
+# a whole season and skews toward stars. For a single week the designation is
+# precisely a statement about availability, which is the question being asked.
+DEFAULT_AVAILABILITY: dict[str, float] = {
+    "out": 0.00,
+    "doubtful": 0.10,
+    "questionable": 0.80,
+    "healthy": 1.00,
 }
 
 
@@ -240,3 +271,30 @@ def ros_multiplier(
     if health.regime is Regime.OUT_SHORT:
         return table["out_short"]
     return table["out_long"]
+
+
+def weekly_multiplier(
+    health: HealthStatus, availability: Mapping[str, float] | None = None
+) -> float:
+    """How much of a *weekly* projection survives this designation.
+
+    Applies to the current week only. Rest-of-season value uses
+    ``ros_multiplier``, which asks a different question: whether a player is
+    available at all over months, rather than on Sunday.
+    """
+    table = dict(DEFAULT_AVAILABILITY)
+    if availability:
+        table.update(availability)
+
+    status = (health.status or "").strip()
+    if not status:
+        return table["healthy"]
+    if status in LONG_TERM_STATUSES or status == "Out":
+        return table["out"]
+    if status == "Doubtful":
+        return table["doubtful"]
+    if status == "Questionable":
+        return table["questionable"]
+    # An unrecognised designation is still a designation; treating it as healthy
+    # would make a new upstream code silently invisible.
+    return table["questionable"]
