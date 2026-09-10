@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
-from fantasylineup.engine.trades import TradeProposal, find_trades
+from fantasylineup.engine.lineup import optimize_lineup
+from fantasylineup.engine.trades import TradeProposal, explain_trade, find_trades
 from fantasylineup.engine.waivers import rank_waiver_targets
 from tests.test_lineup import p
 
@@ -614,3 +617,149 @@ def test_no_claim_contradicts_their_real_lineup():
         # And anyone said to be benched must genuinely leave it after the trade.
         if f"{player.name} moves to your bench" in text:
             assert player.sleeper_id not in after, player.name
+
+
+# ------------------------------------------------- who the trade displaces
+
+
+def _my_side(slots):
+    """A roster whose real lineup deliberately differs from our optimal.
+
+    Two tight ends are rostered; the manager starts the weaker one in a FLEX and
+    benches a receiver our optimal would start. Any claim read from our optimal
+    instead of his lineup names the wrong player.
+    """
+    qb = p("Daniels", "QB", 275.0)
+    te1 = p("McBride", "TE", 200.0)
+    te2 = p("Kittle", "TE", 136.0)
+    benched_wr = p("Golden", "WR", 150.0)
+    roster = [
+        qb,
+        p("Bijan", "RB", 295.0),
+        p("Montgomery", "RB", 206.0),
+        p("London", "WR", 198.0),
+        p("Washington", "WR", 161.0),
+        te1,
+        p("Dowdle", "RB", 146.0),
+        te2,
+        benched_wr,
+    ]
+    # He starts the second tight end in the FLEX and leaves the receiver out.
+    real = [qb, roster[1], roster[2], roster[3], roster[4], te1, roster[6], te2]
+    return roster, real, qb, te2, benched_wr
+
+
+def test_the_rationale_names_who_leaves_my_lineup():
+    """"He starts for you immediately" is half an answer without the other half.
+
+    Reported live: an offer said the incoming players start immediately and
+    never said who they replace, which is the first thing a manager needs in
+    order to judge it.
+    """
+    slots = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX"]
+    roster, real, qb, te2, _ = _my_side(slots)
+    incoming = (p("Meyers", "WR", 169.0), p("Purdy", "QB", 264.0))
+    proposal = TradeProposal(3, "them", (qb,), incoming, 22.0, 3.0)
+
+    rationale = explain_trade(
+        proposal, roster, [p("Filler", "RB", 100.0)], slots, my_starters=real
+    )
+    why = " ".join(rationale.why.split())
+
+    assert "Kittle" in why, "the FLEX he actually starts is who gets pushed out"
+    assert "out of your lineup" in why
+
+
+def test_displacement_is_read_from_the_real_lineup_not_our_optimal():
+    """The mistake this guards against was made by hand while investigating.
+
+    Our optimal for this roster starts the benched receiver; the manager does
+    not. Naming him is naming someone the manager can see is already benched --
+    the same class of error as the two lineup-claim bugs before it.
+    """
+    slots = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX"]
+    roster, real, qb, te2, benched_wr = _my_side(slots)
+
+    our_optimal = {
+        x.sleeper_id for x in optimize_lineup(roster, slots).assignments.values()
+    }
+    assert benched_wr.sleeper_id in our_optimal, "fixture must make the sources disagree"
+    assert benched_wr.sleeper_id not in {x.sleeper_id for x in real}
+
+    proposal = TradeProposal(
+        3, "them", (qb,), (p("Meyers", "WR", 169.0), p("Purdy", "QB", 264.0)), 22.0, 3.0
+    )
+    rationale = explain_trade(
+        proposal, roster, [p("Filler", "RB", 100.0)], slots, my_starters=real
+    )
+    assert benched_wr.name not in rationale.why
+
+
+def test_verbs_agree_with_the_number_of_players():
+    slots = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX"]
+    roster, real, qb, _, _ = _my_side(slots)
+    partner = [p("Filler", "RB", 100.0)]
+
+    two = explain_trade(
+        TradeProposal(
+            3, "them", (qb,), (p("Meyers", "WR", 169.0), p("Purdy", "QB", 264.0)), 22.0, 3.0
+        ),
+        roster, partner, slots, my_starters=real,
+    )
+    one = explain_trade(
+        TradeProposal(3, "them", (qb,), (p("Purdy", "QB", 300.0),), 22.0, 3.0),
+        roster, partner, slots, my_starters=real,
+    )
+    assert "start for you" in two.why and "starts for you" not in two.why
+    assert "starts for you" in one.why
+
+
+# --------------------------------------------------------- bye collisions
+
+
+def test_a_bye_clash_the_trade_creates_is_reported():
+    """Marginal lineup value prices a season total, not the schedule shape.
+
+    Two starters sharing a bye is a week that cannot be covered, and the gain
+    cannot see it. Reported live: a receiver acquired alongside one already
+    rostered on the same team.
+    """
+    slots = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX"]
+    same_bye = p("Washington", "WR", 161.0)
+    roster = [
+        p("Daniels", "QB", 275.0),
+        p("Bijan", "RB", 295.0),
+        p("Montgomery", "RB", 206.0),
+        p("London", "WR", 198.0),
+        dataclasses.replace(same_bye, bye_week=7),
+        p("McBride", "TE", 200.0),
+        p("Dowdle", "RB", 146.0),
+        p("Kittle", "TE", 136.0),
+    ]
+    incoming = dataclasses.replace(p("Meyers", "WR", 169.0), bye_week=7)
+    proposal = TradeProposal(3, "them", (roster[7],), (incoming,), 20.0, 3.0)
+
+    rationale = explain_trade(proposal, roster, [p("Filler", "RB", 100.0)], slots)
+    text = " ".join(rationale.caveats)
+    assert "week 7 bye" in text
+    assert "Meyers" in text and "Washington" in text
+
+
+def test_a_bye_clash_the_roster_already_had_is_not_reported():
+    """Only a clash this trade creates is news; the rest would bury it."""
+    slots = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX"]
+    roster = [
+        p("Daniels", "QB", 275.0),
+        p("Bijan", "RB", 295.0),
+        p("Montgomery", "RB", 206.0),
+        dataclasses.replace(p("London", "WR", 198.0), bye_week=11),
+        dataclasses.replace(p("Washington", "WR", 161.0), bye_week=11),
+        p("McBride", "TE", 200.0),
+        p("Dowdle", "RB", 146.0),
+        p("Kittle", "TE", 136.0),
+    ]
+    incoming = dataclasses.replace(p("Meyers", "WR", 169.0), bye_week=5)
+    proposal = TradeProposal(3, "them", (roster[7],), (incoming,), 20.0, 3.0)
+
+    rationale = explain_trade(proposal, roster, [p("Filler", "RB", 100.0)], slots)
+    assert not any("week 11" in c for c in rationale.caveats)

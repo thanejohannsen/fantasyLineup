@@ -246,6 +246,8 @@ def render_moves(
             lines.append("")
             lines.append(f"      WHY   {_wrap(r.why, 62, 12)}")
             lines.append(f"      THEM  {_wrap(r.their_angle, 62, 12)}")
+            for caveat in r.caveats:
+                lines.append(f"      NOTE  {_wrap(caveat + '.', 62, 12)}")
             lines.append("")
             lines.append("      ---- copy and send ----")
             for para in r.pitch.split("\n"):

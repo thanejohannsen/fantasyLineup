@@ -263,6 +263,10 @@ class TradeRationale:
     their_angle: str
     pitch: str
     disclosures: tuple[str, ...] = ()
+    # Things true about the deal that the gain does not price. Kept apart from
+    # `why` because they argue the other way, and folding them into the case for
+    # a trade is how a caveat gets skimmed past.
+    caveats: tuple[str, ...] = ()
 
 
 def _position_counts(roster: list[PlayerProjection]) -> dict[str, int]:
@@ -290,6 +294,11 @@ def _health_of(player: PlayerProjection) -> HealthStatus:
         notes=player.injury_notes,
         structural=is_structural(player.injury_body_part, player.injury_notes),
     )
+
+
+def _agree(players, singular: str, plural: str) -> str:
+    """Verb matching a name list: one player starts, two players start."""
+    return singular if len(players) == 1 else plural
 
 
 def _names(players: tuple[PlayerProjection, ...]) -> str:
@@ -407,6 +416,21 @@ def explain_trade(
         and p.sleeper_id not in {g.sleeper_id for g in proposal.get}
     ]
 
+    # Who the incoming players push out of *my* lineup -- the mirror of
+    # `displaced`, and the first question a reader asks. "He starts for you
+    # immediately" is only half an answer while the other half, who he replaces,
+    # is missing. Read from the real lineup for the same reason every other
+    # claim is: measured against our own optimal it names a player the manager
+    # can see is already on his bench.
+    sent_ids = {g.sleeper_id for g in proposal.give}
+    my_displaced = [
+        p
+        for p in my_roster
+        if p.sleeper_id in facts.my_now
+        and p.sleeper_id not in facts.my_after
+        and p.sleeper_id not in sent_ids
+    ]
+
     # Who is blocking the player I am sending, so my own reason is specific.
     blocked_by = None
     if sending_benched:
@@ -424,14 +448,51 @@ def explain_trade(
         surplus = sending_benched[0]
         depth = my_before_counts.get(surplus.position, 0)
         parts.append(
-            f"{_names(tuple(sending_benched))} sits on your bench "
-            f"({depth} {surplus.position}s rostered) and does not crack the lineup"
+            f"{_names(tuple(sending_benched))} "
+            f"{_agree(sending_benched, 'sits', 'sit')} on your bench "
+            f"({depth} {surplus.position}s rostered) and "
+            f"{_agree(sending_benched, 'does', 'do')} not crack the lineup"
         )
     if receiving_starter:
-        parts.append(f"{_names(tuple(receiving_starter))} starts for you immediately")
+        clause = (
+            f"{_names(tuple(receiving_starter))} "
+            f"{_agree(receiving_starter, 'starts', 'start')} for you immediately"
+        )
+        if my_displaced:
+            clause += (
+                f", pushing {_names(tuple(my_displaced))} out of your lineup"
+            )
+        parts.append(clause)
     if not parts:
         parts.append("consolidates depth into a better starter")
     why = "; ".join(parts) + f". Worth +{proposal.my_gain:.0f} points rest of season."
+
+    # Two starters sharing a bye is a week that cannot be covered, and marginal
+    # lineup value cannot see it: it prices a season total, not the shape of the
+    # schedule behind it. Reported rather than priced, because what a collision
+    # costs depends on bench depth at that position in that week -- a different
+    # calculation from the one this engine does, and one worth doing properly
+    # rather than approximating inside a trade search.
+    incoming = {g.sleeper_id for g in proposal.get}
+    after_starters = [
+        p
+        for p in [*my_roster, *proposal.get]
+        if p.sleeper_id in facts.my_after
+    ]
+    by_bye: dict[int, list[PlayerProjection]] = {}
+    for player in after_starters:
+        if player.bye_week:
+            by_bye.setdefault(player.bye_week, []).append(player)
+
+    caveats = tuple(
+        f"{_names(tuple(sorted(group, key=lambda x: x.name)))} all share a week "
+        f"{week} bye" if len(group) > 2 else
+        f"{_names(tuple(sorted(group, key=lambda x: x.name)))} share a week {week} bye"
+        for week, group in sorted(by_bye.items())
+        # Only a clash this trade would create is worth raising; one the roster
+        # already has is not news, and listing it would bury the one that is.
+        if len(group) > 1 and any(p.sleeper_id in incoming for p in group)
+    )
 
     # --- why they should say yes -------------------------------------------
     # Depth is reported per player: a package can span two positions, and
@@ -443,7 +504,10 @@ def explain_trade(
             f"{player.name} starts for them (they roster {depth} at {player.position})"
         )
     if their_benched_out:
-        their_parts.append(f"{_names(tuple(their_benched_out))} is not in their lineup either")
+        their_parts.append(
+            f"{_names(tuple(their_benched_out))} "
+            f"{_agree(their_benched_out, 'is', 'are')} not in their lineup either"
+        )
     if not their_parts:
         their_parts.append("they gain lineup value at a position they are thin at")
     their_angle = "; ".join(their_parts) + f". Worth +{proposal.their_gain:.0f} to them."
@@ -519,7 +583,11 @@ def explain_trade(
     # Wrapped so it pastes into a messaging app without reflowing into one line.
     pitch = "\n\n".join("\n".join(textwrap.wrap(line, 72)) for line in lines)
     return TradeRationale(
-        why=why, their_angle=their_angle, pitch=pitch, disclosures=disclosures
+        why=why,
+        their_angle=their_angle,
+        pitch=pitch,
+        disclosures=disclosures,
+        caveats=caveats,
     )
 
 

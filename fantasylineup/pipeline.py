@@ -155,6 +155,8 @@ def blended_projections(
             weekly_week,
         )
 
+    byes = bye_weeks(conn, season)
+
     placeholders = ",".join("?" * len(player_ids))
     rows = conn.execute(
         f"""SELECT sleeper_id, full_name, position, fantasy_positions, team, kalshi_id,
@@ -201,6 +203,7 @@ def blended_projections(
                 fantasy_positions=positions or frozenset({r["position"]}),
                 team=r["team"],
                 opponent=proj.get("opponent"),
+                bye_week=byes.get(r["team"] or ""),
                 market_shift=blend.shift if blend.has_market else 0.0,
                 market_coverage=blend.coverage if blend.has_market else 0.0,
                 injury_status=r["injury_status"],
@@ -527,3 +530,28 @@ def live_states(
         )
         for p in players
     }
+
+
+def bye_weeks(conn: sqlite3.Connection, season: int) -> dict[str, int]:
+    """Each team's bye, derived from the week it has no game.
+
+    Nothing stores a bye directly; it is the hole in the schedule. A team with
+    no hole, or more than one, is left out rather than guessed at -- a wrong bye
+    week is worse than none, because it would be quietly acted on.
+    """
+    played: dict[str, set[int]] = {}
+    weeks: set[int] = set()
+    for r in conn.execute(
+        "SELECT week, home, away FROM games WHERE season = ?", (season,)
+    ):
+        weeks.add(r["week"])
+        for team in (r["home"], r["away"]):
+            if team:
+                played.setdefault(team, set()).add(r["week"])
+
+    out: dict[str, int] = {}
+    for team, seen in played.items():
+        missing = sorted(weeks - seen)
+        if len(missing) == 1:
+            out[team] = missing[0]
+    return out

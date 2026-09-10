@@ -32,6 +32,15 @@ hand in the app.
   traded the rest are dead. A flat list invites sending all of them and honouring
   whichever is accepted first, which is how you take the worst of three offers you
   could have had.
+- **Names who leaves your lineup.** "He starts for you immediately" is half an
+  answer; the other half is who he replaces, read from the lineup you actually
+  set rather than the one the optimiser would pick.
+- **Flags bye-week collisions a trade would create.** Marginal lineup value
+  prices a season total, not the shape of the schedule behind it, so two
+  starters sharing a bye is invisible to the gain. It is reported rather than
+  priced: what a collision costs depends on bench depth at that position in that
+  week, which is a different calculation and worth doing properly rather than
+  approximating inside a trade search.
 - **Explains each trade and drafts the message.** Every offer comes with why it
   helps you, why the other manager should say yes, and a sendable pitch. Each
   claim is derived from roster state both managers can already see — a message
@@ -285,7 +294,7 @@ generates would be breaking new ground, which is also why the pitch text matters
 ## Development
 
 ```bash
-.venv/bin/python -m pytest        # 136 tests, no network required
+.venv/bin/python -m pytest        # 142 tests, no network required
 ```
 
 Tests run against captured real API responses in `fixtures/`, so they fail if an

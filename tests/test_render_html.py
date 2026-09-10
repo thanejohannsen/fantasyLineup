@@ -293,3 +293,36 @@ def test_a_market_moved_projection_is_marked():
     advisory.current.assignments[0] = moved
     body = render_team_body(TeamView(1, "T", advisory))
     assert "K+1.4" in body
+
+
+def test_trade_caveats_reach_the_page():
+    """A caveat computed and not rendered is worse than one never computed.
+
+    This shipped exactly that way once: the bye-clash text was built into a
+    local variable that no template interpolated, so the engine knew and the
+    reader did not.
+    """
+    from fantasylineup.engine.trades import TradeRationale
+
+    panel = render_moves_panel(
+        [],
+        [
+            TradeProposal(
+                partner_roster_id=3,
+                partner_name="Them",
+                give=(p("Mine", "RB", 200.0),),
+                get=(p("Theirs", "WR", 220.0),),
+                my_gain=12.0,
+                their_gain=4.0,
+            )
+        ],
+        {
+            0: TradeRationale(
+                why="because",
+                their_angle="they need it",
+                pitch="Mine for Theirs?",
+                caveats=("Theirs and Other share a week 7 bye",),
+            )
+        },
+    )
+    assert "week 7 bye" in panel

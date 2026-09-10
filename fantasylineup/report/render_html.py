@@ -279,13 +279,19 @@ def _aligned_slots(advisory):
 
 
 def _player_cell(player, *, faded: bool = False) -> str:
+    """Name, badges and opponent, with the projection in its own cell after it.
+
+    The number is a column rather than a trailing span so the figures line up
+    down the table and can be compared at a glance. Trailing it after the
+    opponent put a different amount of text in front of every number.
+    """
     if player is None:
-        return '<td class="empty">-</td>'
+        return '<td class="empty">-</td><td class="num"></td>'
     cls = "faded" if faded else ""
     opp = f' <span class="slot">vs {_esc(player.opponent)}</span>' if player.opponent else ""
     return (
         f'<td class="{cls}">{_esc(player.name)}{_injury_html(player)}{_market_html(player)}'
-        f'{opp} <span class="pts">{player.points:.1f}</span></td>'
+        f'{opp}</td><td class="num {cls}">{player.points:.1f}</td>'
     )
 
 
@@ -350,7 +356,8 @@ def render_team_body(view: TeamView, hidden: bool = False) -> str:
     )
     bench_block = (
         f'<div class="panel"><h2>Bench</h2><div class="scroll"><table>'
-        f'<tr><th>Pos</th><th>Player</th><th class="when">Kickoff</th></tr>'
+        f'<tr><th>Pos</th><th>Player</th><th class="num">Proj</th>'
+        f'<th class="when">Kickoff</th></tr>'
         f"{bench_rows}</table></div></div>"
         if bench
         else ""
@@ -401,7 +408,8 @@ def render_team_body(view: TeamView, hidden: bool = False) -> str:
         f'<section class="team" data-team="{view.roster_id}"{" hidden" if hidden else ""}>'
         f"{deadline}{headline}"
         f'<div class="panel"><h2>Lineup</h2><div class="scroll"><table>'
-        f'<tr><th>Slot</th><th>Current</th><th>Recommended</th>'
+        f'<tr><th>Slot</th><th>Current</th><th class="num">Proj</th>'
+        f'<th>Recommended</th><th class="num">Proj</th>'
         f'<th class="when">Kickoff</th></tr>'
         f'{"".join(rows)}'
         f"</table></div>"
@@ -516,6 +524,11 @@ def render_moves_panel(
             r = rationales.get(i)
             why = f'<p class="why"><b>Why:</b> {_esc(r.why)}</p>' if r else ""
             angle = f'<p class="why"><b>Their side:</b> {_esc(r.their_angle)}</p>' if r else ""
+            caveats = (
+                "".join(f'<p class="conflict">{_esc(c)}.</p>' for c in r.caveats)
+                if r
+                else ""
+            )
             pitch = ""
             if r:
                 pitch = (
@@ -565,7 +578,7 @@ def render_moves_panel(
                 f'<span class="slot">[{_esc(p.shape)}]</span> {badge}</div>'
                 f"<div>Send <b>{_esc(', '.join(x.name for x in p.give))}</b></div>"
                 f"<div>Get <b>{_esc(', '.join(x.name for x in p.get))}</b></div>"
-                f"{gains}{rests}{conflict}{why}{angle}{pitch}</div>"
+                f"{gains}{rests}{conflict}{why}{angle}{caveats}{pitch}</div>"
             )
         parts.append(
             f'<div class="panel"><h2>Trade offers</h2>'

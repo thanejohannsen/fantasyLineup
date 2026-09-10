@@ -73,6 +73,9 @@ class PlayerProjection:
     # Sleeper's own figure passed straight through.
     market_shift: float = 0.0
     market_coverage: float = 0.0
+    # The week his team does not play. Carried here so a rest-of-season figure
+    # can be read alongside the shape of the schedule behind it.
+    bye_week: int | None = None
 
     @property
     def has_market(self) -> bool:
