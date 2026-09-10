@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 
 from ..engine.lineup import Lineup, PlayerProjection, optimize_lineup, starting_slots
 from ..engine.locks import LockState, locked_slot_assignments, next_deadline, player_lock_states
-from ..engine.simulate import SimulatedOutcome
+from ..engine.simulate import LiveState, SimulatedOutcome
 from ..engine.winprob import optimize_for_win_probability, posture
 
 
@@ -149,6 +149,7 @@ def build_advisory(
     sds: dict[str, float] | None = None,
     my_banked: float = 0.0,
     opponent_banked: float = 0.0,
+    live: dict[str, LiveState] | None = None,
     draws: int = 20000,
 ) -> Advisory:
     """Recommend a lineup, respecting what has already locked.
@@ -174,8 +175,7 @@ def build_advisory(
             sds=sds,
             forced=forced,
             draws=draws,
-            my_banked=my_banked,
-            opponent_banked=opponent_banked,
+            live=live,
         )
         optimal, outcome, ev_outcome, swaps = (
             result.lineup,

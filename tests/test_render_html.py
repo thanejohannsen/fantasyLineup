@@ -24,6 +24,7 @@ from fantasylineup.report.render_html import (
     TeamView,
     render_dashboard,
     render_moves_panel,
+    render_team_body,
 )
 from tests.test_lineup import p
 
@@ -185,3 +186,110 @@ def test_an_unknown_default_falls_back_rather_than_hiding_everything():
     html = render_dashboard("ZOO", views, default_roster_id=99)
     sections = re.findall(r'<section class="team" data-team="(\d+)"([^>]*)>', html)
     assert [rid for rid, attrs in sections if "hidden" not in attrs] == ["3"]
+
+
+# ------------------------------------------------- current vs recommended
+
+
+def _lineups(current_ids: list[str], optimal_ids: list[str], slots: list[str]):
+    """Two lineups over the same slots, from player ids."""
+    pool = {
+        "QB1": p("QB1", "QB", 18.0),
+        "RB1": p("RB1", "RB", 21.4),
+        "RB2": p("RB2", "RB", 15.3),
+        "WR1": p("WR1", "WR", 14.9),
+        "BENCH": p("BENCH", "RB", 8.7),
+    }
+    build = lambda ids: Lineup(  # noqa: E731
+        slots=slots,
+        assignments={i: pool[x] for i, x in enumerate(ids)},
+        bench=[v for k, v in pool.items() if k not in ids],
+    )
+    return build(current_ids), build(optimal_ids), pool
+
+
+def _advisory_from(current_ids, optimal_ids, slots):
+    current, optimal, pool = _lineups(current_ids, optimal_ids, slots)
+    return Advisory(
+        week=1,
+        slots=slots,
+        optimal=optimal,
+        current=current,
+        changes=[],
+        generated_at=_NOW,
+        lock_states={x.sleeper_id: LockState(False, KICKOFF) for x in pool.values()},
+        deadline=KICKOFF,
+        opponent_name="them",
+    )
+
+
+def _changed_rows(html_text: str) -> int:
+    return len(re.findall(r'<tr class="[^"]*changed', html_text))
+
+
+def test_shuffling_the_same_starters_between_equal_slots_is_not_a_change():
+    """The bug this caught: two RB slots reporting two changes and +0.0 points.
+
+    Which back the optimiser puts in RB1 versus RB2 is arbitrary. Compared index
+    by index, a lineup where nobody moved reads as two changes, which trains the
+    reader to ignore the highlight.
+    """
+    slots = ["QB", "RB", "RB", "WR"]
+    advisory = _advisory_from(
+        ["QB1", "RB1", "RB2", "WR1"], ["QB1", "RB2", "RB1", "WR1"], slots
+    )
+    body = render_team_body(TeamView(1, "T", advisory))
+
+    assert _changed_rows(body) == 0
+    assert "already matches" in body
+
+
+def test_a_player_entering_the_lineup_is_a_change():
+    slots = ["QB", "RB", "RB", "WR"]
+    advisory = _advisory_from(
+        ["QB1", "RB1", "RB2", "WR1"], ["QB1", "RB1", "BENCH", "WR1"], slots
+    )
+    body = render_team_body(TeamView(1, "T", advisory))
+
+    assert _changed_rows(body) == 1
+    assert "1 change from" in body
+
+
+def test_both_lineups_are_shown_side_by_side():
+    slots = ["QB", "RB", "RB", "WR"]
+    advisory = _advisory_from(
+        ["QB1", "RB1", "RB2", "WR1"], ["QB1", "RB1", "BENCH", "WR1"], slots
+    )
+    body = render_team_body(TeamView(1, "T", advisory))
+
+    assert "<th>Current</th>" in body and "<th>Recommended</th>" in body
+    # The player being benched stays visible -- knowing who you move off is
+    # half the decision.
+    assert "RB2" in body and "BENCH" in body
+
+
+def test_the_bench_is_listed():
+    slots = ["QB", "RB", "RB", "WR"]
+    advisory = _advisory_from(
+        ["QB1", "RB1", "RB2", "WR1"], ["QB1", "RB1", "RB2", "WR1"], slots
+    )
+    body = render_team_body(TeamView(1, "T", advisory))
+    assert "<h2>Bench</h2>" in body and "BENCH" in body
+
+
+def test_a_market_moved_projection_is_marked():
+    """Sleeper's own number and one Kalshi moved must not look identical."""
+    import dataclasses
+
+    slots = ["QB"]
+    advisory = _advisory_from(["QB1"], ["QB1"], slots)
+    plain = render_team_body(TeamView(1, "T", advisory))
+    assert 'class="mkt"' not in plain.split('<p class="note">')[0]
+
+    moved = dataclasses.replace(
+        advisory.optimal.assignments[0], market_shift=1.4, market_coverage=0.8
+    )
+    advisory.optimal.assignments[0] = moved
+    advisory.current.assignments[0] = moved
+    body = render_team_body(TeamView(1, "T", advisory))
+    assert "K+1.4" in body

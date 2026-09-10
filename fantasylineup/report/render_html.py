@@ -116,6 +116,18 @@ td.slot, th.slot { width: 3.4rem; }
   color: var(--ink); background: var(--panel);
   border: 1px solid var(--line); border-radius: 6px;
 }
+/* A changed slot is the only thing on the page worth acting on, so it gets the
+   accent rail; the player being benched fades rather than disappearing, because
+   knowing who you are moving off is half the decision. */
+tr.changed td { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+tr.changed td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+td.faded { color: var(--muted); text-decoration: line-through; }
+.pts { color: var(--muted); font-size: .78rem; font-variant-numeric: tabular-nums; }
+.mkt {
+  color: var(--accent); font-size: .68rem; letter-spacing: .02em;
+  border: 1px solid var(--accent); border-radius: 4px; padding: 0 .26rem;
+  white-space: nowrap;
+}
 """
 
 
@@ -203,6 +215,80 @@ def _injury_html(player) -> str:
     return f' <span class="injury">{_esc(label)}</span>'
 
 
+def _market_html(player) -> str:
+    """Marker showing the market touched this number, and which way.
+
+    Without it a projection is unattributable: Sleeper's own figure and one the
+    Kalshi ladders moved look identical, and they do not deserve equal trust.
+    """
+    if not getattr(player, "has_market", False):
+        return ""
+    return (
+        f' <span class="mkt" title="Kalshi moved this {player.market_shift:+.1f} points; '
+        f'the market prices {player.market_coverage:.0%} of his scoring">'
+        f"K{player.market_shift:+.1f}</span>"
+    )
+
+
+def _lock_cell(state) -> str:
+    """Kickoff as an absolute time, rewritten to a countdown by the browser.
+
+    A server-rendered "5d 1h" is replaced before anyone reads it, but it changes
+    every hour, which made the page differ from the last commit on unchanged
+    data. An absolute time is also the more honest fallback: a cached page
+    showing "5d 1h" is wrong, one showing the kickoff stays true however stale.
+    """
+    if state.locked:
+        return '<td class="when">locked</td>'
+    if state.kickoff_utc is None:
+        return '<td class="when">bye</td>'
+    return (
+        f'<td class="when" data-kickoff="{state.kickoff_utc.isoformat()}">'
+        f"{_esc(f'{state.kickoff_utc:%a %H:%M}')}</td>"
+    )
+
+
+def _aligned_slots(advisory):
+    """(slot, current, recommended) per slot, with interchangeable slots paired.
+
+    Two RB slots are the same slot, and which back the optimiser puts in which
+    index is arbitrary. Compared index by index, a lineup where nothing moved
+    reports two changes and a gain of +0.0 -- which is what it did before this
+    existed. Players present in both lineups are paired up first so only genuine
+    entries and exits are left to differ.
+    """
+    by_label: dict[str, list[int]] = {}
+    for i, label in enumerate(advisory.slots):
+        by_label.setdefault(label, []).append(i)
+
+    out: list[tuple[str, object, object]] = [("", None, None)] * len(advisory.slots)
+    for label, idxs in by_label.items():
+        now = [advisory.current.assignments.get(i) for i in idxs]
+        best = [advisory.optimal.assignments.get(i) for i in idxs]
+        now_ids = {p.sleeper_id for p in now if p}
+        keep = {p.sleeper_id: p for p in best if p and p.sleeper_id in now_ids}
+        arriving = iter([p for p in best if p and p.sleeper_id not in now_ids])
+
+        arranged = [keep.get(p.sleeper_id) if p else None for p in now]
+        for k, v in enumerate(arranged):
+            if v is None:
+                arranged[k] = next(arriving, None)
+        for i, n, b in zip(idxs, now, arranged):
+            out[i] = (label, n, b)
+    return out
+
+
+def _player_cell(player, *, faded: bool = False) -> str:
+    if player is None:
+        return '<td class="empty">-</td>'
+    cls = "faded" if faded else ""
+    opp = f' <span class="slot">vs {_esc(player.opponent)}</span>' if player.opponent else ""
+    return (
+        f'<td class="{cls}">{_esc(player.name)}{_injury_html(player)}{_market_html(player)}'
+        f'{opp} <span class="pts">{player.points:.1f}</span></td>'
+    )
+
+
 @dataclass(frozen=True)
 class TeamView:
     """One team's report, ready to render into the shared page."""
@@ -218,60 +304,57 @@ def render_team_body(view: TeamView, hidden: bool = False) -> str:
     a = view.advisory
     moves_html = view.moves_html
 
+    # Current beside recommended, so a change is visible as a difference rather
+    # than as a separate list the reader has to reconcile against the table.
     rows = []
-    for i, (slot, player) in enumerate(a.optimal.describe()):
-        if player is None:
-            rows.append(
-                f'<tr><td class="slot">{_esc(slot)}</td>'
-                f'<td class="empty" colspan="3">no eligible player</td></tr>'
-            )
-            continue
-        state = a.lock_states.get(player.sleeper_id, _UNKNOWN)
-        # Absolute, not a countdown. The browser rewrites every [data-kickoff]
-        # element on load, so a server-rendered "5d 1h" is replaced before it is
-        # ever read -- but it changes on every hourly run, which made the page
-        # differ from the last commit every hour and defeated the guard meant to
-        # keep the history to real changes. An absolute time is also the more
-        # honest fallback: a cached page showing "5d 1h" is wrong, while one
-        # showing the kickoff itself stays true however stale it gets.
-        when = (
-            "locked"
-            if state.locked
-            else ("bye" if state.kickoff_utc is None else f"{state.kickoff_utc:%a %H:%M}")
+    changed_slots = 0
+    # Membership, not slot position: a change is a player entering or leaving
+    # the lineup. Shuffling the same starters between equivalent slots costs
+    # nothing and is not worth acting on.
+    now_ids = {p.sleeper_id for p in a.current.assignments.values()}
+    best_ids = {p.sleeper_id for p in a.optimal.assignments.values()}
+    for slot, now, best in _aligned_slots(a):
+        state = a.lock_states.get(
+            (best or now).sleeper_id if (best or now) else "", _UNKNOWN
         )
-        cls = ' class="locked"' if state.locked else ""
-        opp = f"vs {_esc(player.opponent)}" if player.opponent else ""
-        # The absolute kickoff travels with the row so the countdown can be
-        # recomputed in the browser; the server-rendered text is the fallback.
-        stamp = (
-            f' data-kickoff="{state.kickoff_utc.isoformat()}"'
-            if state.kickoff_utc is not None and not state.locked
-            else ""
+        differs = (best is not None and best.sleeper_id not in now_ids) or (
+            now is not None and now.sleeper_id not in best_ids
         )
+        changed_slots += differs
+        cls = "changed" if differs else ("locked" if state.locked else "")
         rows.append(
-            f"<tr{cls}><td class=\"slot\">{_esc(slot)}</td>"
-            f"<td>{_esc(player.name)}{_injury_html(player)} "
-            f"<span class=\"slot\">{opp}</span></td>"
-            f'<td class="num">{player.points:.1f}</td>'
-            f'<td class="when"{stamp}>{_esc(when)}</td></tr>'
+            f'<tr class="{cls}"><td class="slot">{_esc(slot)}</td>'
+            + _player_cell(now, faded=differs)
+            + _player_cell(best)
+            + _lock_cell(state)
+            + "</tr>"
         )
 
-    if a.changes:
-        changes = "".join(
-            f"<li class=\"change\">Start {_esc(c.start.name)} at {_esc(c.slot)}"
-            + (f" instead of {_esc(c.sit.name)}" if c.sit else "")
-            + f" <span class=\"slot\">+{c.gain:.1f} pts</span></li>"
-            for c in a.changes
-        )
-        changes_block = (
-            f'<div class="panel"><h2>Change your lineup</h2><ul>{changes}</ul>'
-            f'<p class="note">Sleeper\'s API is read-only. Make these changes in the app.</p></div>'
+    if changed_slots:
+        plural = "" if changed_slots == 1 else "s"
+        summary = (
+            f"{changed_slots} change{plural} from the lineup you have set, worth "
+            f"{a.gain:+.1f} projected points. Sleeper's API is read-only, so make "
+            f"them in the app."
         )
     else:
-        changes_block = (
-            '<div class="panel"><h2>Lineup</h2>'
-            "<p>Your current lineup is already optimal. Nothing to change.</p></div>"
-        )
+        summary = "Your lineup already matches the recommendation."
+
+    bench = sorted(a.optimal.bench, key=lambda x: -x.points)
+    bench_rows = "".join(
+        f'<tr><td class="slot">{_esc(b.position)}</td>'
+        + _player_cell(b)
+        + _lock_cell(a.lock_states.get(b.sleeper_id, _UNKNOWN))
+        + "</tr>"
+        for b in bench
+    )
+    bench_block = (
+        f'<div class="panel"><h2>Bench</h2><div class="scroll"><table>'
+        f'<tr><th>Pos</th><th>Player</th><th class="when">Kickoff</th></tr>'
+        f"{bench_rows}</table></div></div>"
+        if bench
+        else ""
+    )
 
     if a.outcome is not None:
         wp = a.outcome.win_probability
@@ -286,7 +369,13 @@ def render_team_body(view: TeamView, hidden: bool = False) -> str:
             f'<div class="headline">{wp:.0%} <small>win probability</small></div>'
             f'<div class="posture">{_esc(a.posture)}</div>'
             f'<div class="note">Projected {a.outcome.mean:.0f} pts '
-            f"({a.outcome.p10:.0f}-{a.outcome.p90:.0f}, 10th-90th percentile)</div>{banked}</div>"
+            f"({a.outcome.p10:.0f}-{a.outcome.p90:.0f}, 10th-90th percentile)</div>{banked}"
+            # Both sides of a matchup can read above 50%, and the page now shows
+            # both. It is not an inconsistency: each number assumes that team
+            # makes its recommended changes while the opponent plays his
+            # highest-points lineup, and both teams can gain by switching.
+            f'<div class="note">Assumes you make the changes below and they play '
+            f"their highest-points lineup.</div></div>"
         )
     else:
         headline = (
@@ -310,12 +399,16 @@ def render_team_body(view: TeamView, hidden: bool = False) -> str:
 
     return (
         f'<section class="team" data-team="{view.roster_id}"{" hidden" if hidden else ""}>'
-        f"{deadline}{headline}{changes_block}"
-        f'<div class="panel"><h2>Recommended lineup</h2><div class="scroll"><table>'
-        f'<tr><th>Slot</th><th>Player</th><th class="num">Proj</th>'
-        f'<th class="when">Locks</th></tr>'
+        f"{deadline}{headline}"
+        f'<div class="panel"><h2>Lineup</h2><div class="scroll"><table>'
+        f'<tr><th>Slot</th><th>Current</th><th>Recommended</th>'
+        f'<th class="when">Kickoff</th></tr>'
         f'{"".join(rows)}'
-        f"</table></div></div>"
+        f"</table></div>"
+        f'<p class="note">{summary} <span class="mkt">K</span> marks a projection '
+        f"the Kalshi market moved, and by how much; everything else is Sleeper's "
+        f"own number.</p></div>"
+        f"{bench_block}"
         f"{moves_html}"
         f"</section>"
     )

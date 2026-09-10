@@ -10,15 +10,17 @@ import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from .engine.lineup import PlayerProjection, starting_slots
+from .engine.simulate import LiveState
 from .engine.locks import locked_slot_assignments, player_lock_states
 from .model.blend import BlendResult, blend_player, fit_ladders, group_quotes
 from .model.health import HealthStatus, Regime, classify, is_structural, ros_multiplier
 from .model.projections import REST_OF_SEASON, latest_projections
 from .model.variance import VarianceModel, default_model
 from .sources.kalshi import KalshiClient
+from .sources.kickoffs import remaining_fraction
 from .sources.sleeper import SleeperClient
 from .sync import compute_availability
 
@@ -87,10 +89,15 @@ def find_opponent(
 
 
 def all_matchups(
-    conn: sqlite3.Connection, client: SleeperClient, league_id: str, week: int
+    conn: sqlite3.Connection,
+    client: SleeperClient,
+    league_id: str,
+    week: int,
+    entries: list[dict[str, Any]] | None = None,
 ) -> dict[int, MatchupContext]:
     """Every roster's opponent for the week, from a single fetch."""
-    entries = client.matchups(league_id, week)
+    if entries is None:
+        entries = client.matchups(league_id, week)
     names = roster_names(conn, league_id)
     return {
         int(m["roster_id"]): _resolve_matchup(entries, names, int(m["roster_id"]))
@@ -194,6 +201,8 @@ def blended_projections(
                 fantasy_positions=positions or frozenset({r["position"]}),
                 team=r["team"],
                 opponent=proj.get("opponent"),
+                market_shift=blend.shift if blend.has_market else 0.0,
+                market_coverage=blend.coverage if blend.has_market else 0.0,
                 injury_status=r["injury_status"],
                 injury_body_part=r["injury_body_part"],
                 injury_notes=r["injury_notes"],
@@ -473,4 +482,48 @@ def games_played(conn: sqlite3.Connection, season: int) -> dict[str, int]:
                GROUP BY sleeper_id""",
             (season,),
         )
+    }
+
+
+def game_remaining(conn: sqlite3.Connection, season: int, week: int) -> dict[str, float]:
+    """Fraction of each team's game still to play, keyed by team abbreviation."""
+    out: dict[str, float] = {}
+    for r in conn.execute(
+        "SELECT home, away, status, period, clock FROM games WHERE season = ? AND week = ?",
+        (season, week),
+    ):
+        left = remaining_fraction(r["status"], r["period"], r["clock"])
+        for team in (r["home"], r["away"]):
+            if team:
+                out[team] = left
+    return out
+
+
+def live_states(
+    conn: sqlite3.Connection,
+    entries: list[dict[str, Any]],
+    season: int,
+    week: int,
+    players: Iterable[PlayerProjection],
+) -> dict[str, LiveState]:
+    """What each player has already scored, and how much of his game is left.
+
+    Both halves come from different places -- the score from Sleeper's matchup
+    entries, the clock from ESPN's scoreboard -- and both are needed. A team
+    total cannot substitute: added to a full simulation of the lineup it counts
+    every player who has already played twice, once as what he scored and again
+    as what he was projected to score.
+    """
+    left_by_team = game_remaining(conn, season, week)
+    scored: dict[str, float] = {}
+    for m in entries:
+        for pid, points in (m.get("players_points") or {}).items():
+            scored[pid] = float(points or 0.0)
+
+    return {
+        p.sleeper_id: LiveState(
+            scored=scored.get(p.sleeper_id, 0.0),
+            remaining=left_by_team.get(p.team or "", 1.0),
+        )
+        for p in players
     }

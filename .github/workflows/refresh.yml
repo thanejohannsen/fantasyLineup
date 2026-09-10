@@ -1,17 +1,24 @@
 name: Refresh advisory
 
-# Hourly, with the decision about how much work to do made inside `fl refresh`
-# rather than encoded as six separate cron entries. Neither Sleeper nor Kalshi
-# needs authentication, so there are no secrets and nothing to rotate.
+# Every fifteen minutes, with the decision about how much work to do made inside
+# `fl refresh` rather than encoded as separate cron entries. Neither Sleeper nor
+# Kalshi needs authentication, so there are no secrets and nothing to rotate.
 #
-# Two scheduling caveats worth knowing. GitHub disables scheduled workflows
-# after 60 days of repository inactivity -- the commit this job makes each run
-# keeps it alive. And cron here can be delayed by several minutes under load, so
-# nothing downstream treats a run time as a deadline: every deadline is computed
-# from the schedule data itself.
+# The interval is deliberately shorter than the refresh rate we actually want.
+# GitHub drops scheduled runs under load rather than queuing them: an hourly
+# cron measured over its first two days fired eleven times in forty-three hours,
+# a run every 4.3 hours on average and once as little as six times a day. Asking
+# four times as often does not make GitHub punctual, but it makes a missed slot
+# cost minutes instead of hours -- which matters when a player is cleared the
+# day before kickoff.
+#
+# Two further caveats worth knowing. GitHub disables scheduled workflows after
+# 60 days of repository inactivity -- the commit this job makes keeps it alive.
+# And cron here can be delayed regardless, so nothing downstream treats a run
+# time as a deadline: every deadline is computed from the schedule data itself.
 on:
   schedule:
-    - cron: "7 * * * *"
+    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       with_moves:

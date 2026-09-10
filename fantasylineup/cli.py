@@ -26,6 +26,7 @@ from .pipeline import (
     current_starters,
     games_played,
     league_activity,
+    live_states,
     blended_projections,
     fetch_market_fits,
     find_opponent,
@@ -157,6 +158,7 @@ def cmd_advise(args: argparse.Namespace) -> int:
 
         matchup = find_opponent(conn, client, cfg.league.league_id, roster_id, week)
         opponent_starters: list = []
+        opponent_players_for_live: list = []
         sds = standard_deviations(players, blends)
         if matchup.opponent_roster_id is not None:
             opponent_ids = roster_players_for(
@@ -173,6 +175,7 @@ def cmd_advise(args: argparse.Namespace) -> int:
             )
             # We cannot know what they will actually start, so assume they play
             # their best legal lineup. Assuming less would flatter our own odds.
+            opponent_players_for_live = opponent_players
             opponent_starters = optimize_lineup(
                 opponent_players, starting_slots(league["roster_positions"])
             ).starters
@@ -191,6 +194,13 @@ def cmd_advise(args: argparse.Namespace) -> int:
             sds=sds,
             my_banked=matchup.my_banked,
             opponent_banked=matchup.opponent_banked,
+            live=live_states(
+                conn,
+                client.matchups(cfg.league.league_id, week),
+                cfg.league.season,
+                week,
+                [*players, *opponent_players_for_live],
+            ),
             draws=cfg.model.sim_draws,
         )
 
@@ -402,7 +412,8 @@ def cmd_refresh(args: argparse.Namespace) -> int:
         avail = compute_availability(conn, cfg.league.league_id, cfg.league.roster_id)
         league_rosters = all_rosters(conn, cfg.league.league_id)
         names = roster_names(conn, cfg.league.league_id)
-        matchups = all_matchups(conn, client, cfg.league.league_id, week)
+        entries = client.matchups(cfg.league.league_id, week)
+        matchups = all_matchups(conn, client, cfg.league.league_id, week, entries=entries)
 
         # Every team is also exactly one other team's opponent, so memoising the
         # weekly blend halves the work rather than merely tidying it.
@@ -426,11 +437,18 @@ def cmd_refresh(args: argparse.Namespace) -> int:
             matchup = matchups.get(rid) or MatchupContext(None, "unknown", 0.0, 0.0)
             sds = standard_deviations(players, blends)
             opponent_starters: list = []
+            opp_players_for_live: list = []
             if matchup.opponent_roster_id is not None:
                 opp_players, opp_blends = weekly_for(matchup.opponent_roster_id)
+                opp_players_for_live = opp_players
                 opponent_starters = optimize_lineup(opp_players, slots).starters
                 sds.update(standard_deviations(opp_players, opp_blends))
 
+            # Points already on the board are known, so they must not be
+            # re-drawn alongside the projection that anticipated them.
+            live = live_states(
+                conn, entries, cfg.league.season, week, [*players, *opp_players_for_live]
+            )
             views.append(
                 TeamView(
                     roster_id=rid,
@@ -442,6 +460,7 @@ def cmd_refresh(args: argparse.Namespace) -> int:
                         opponent_name=matchup.opponent_name,
                         sds=sds, my_banked=matchup.my_banked,
                         opponent_banked=matchup.opponent_banked,
+                        live=live,
                         draws=cfg.model.sim_draws, now=now,
                     ),
                     moves_html=moves_html.get(rid, ""),

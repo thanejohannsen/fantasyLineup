@@ -20,7 +20,9 @@ hand in the app.
 - **Optimises win probability, not points**, when the opponent is known. A heavy
   favourite protects the floor; a heavy underdog chases the ceiling. Points
   already scored are treated as known, so after a Thursday bust it chases and
-  after a Thursday smash it protects — no special-case logic.
+  after a Thursday smash it protects — no special-case logic. A player partway
+  through his game keeps the fraction of his projection still to come, scaled by
+  the game clock.
 - **Ranks waivers and trades by marginal lineup value.** A player is worth what
   he adds to *your* best legal lineup, which is zero for a fifth running back on
   a roster already starting four. Trades must improve both sides, or they get
@@ -50,7 +52,14 @@ hand in the app.
   the offers another manager should want are the ones he is most likely to
   accept -- and as a check on the model, since a claim about someone else's
   roster is one you can verify in the app in ten seconds.
-- **Publishes a dashboard** to GitHub Pages, refreshed hourly by Actions.
+- **Shows the lineup you have set beside the one it recommends**, marks the slots
+  that differ, and lists the bench. A change is measured by who enters and leaves
+  the lineup, not by slot index -- the optimiser's choice between two equivalent
+  RB slots is arbitrary, and reporting that as a change trains you to ignore the
+  highlight.
+- **Says where each number came from.** A `K` badge marks a projection the Kalshi
+  market moved and by how much; everything else is Sleeper's own figure.
+- **Publishes a dashboard** to GitHub Pages, refreshed by Actions.
 
 ## Quick start
 
@@ -108,6 +117,24 @@ Coverage is uneven, and the report says so rather than implying otherwise:
 
 Sleeper is the anchor; the market adjusts it within a cap scaled by how much of a
 player's scoring it actually prices.
+
+## How often it refreshes
+
+The workflow asks every fifteen minutes. GitHub does not oblige: it drops
+scheduled runs under load rather than queuing them, and an hourly cron measured
+over its first two days fired **eleven times in forty-three hours** -- a run
+every 4.3 hours on average, with one gap over six. Asking four times as often
+does not make the scheduler punctual, it makes a missed slot cost minutes rather
+than hours.
+
+Rosters and lineups are re-read in full on every run, so a lineup change you make
+in the app appears on the next one. The page carries the time it was built, which
+is the only honest answer to how current it is. To force one immediately, run
+the **Refresh advisory** workflow from the Actions tab.
+
+Trades and waivers are rest-of-season decisions and only recompute when the next
+kickoff is more than 24 hours away, so the slate itself does not get slowed down
+by a search whose answer will not have changed.
 
 ## Learning from results
 
@@ -258,7 +285,7 @@ generates would be breaking new ground, which is also why the pitch text matters
 ## Development
 
 ```bash
-.venv/bin/python -m pytest        # 128 tests, no network required
+.venv/bin/python -m pytest        # 136 tests, no network required
 ```
 
 Tests run against captured real API responses in `fixtures/`, so they fail if an

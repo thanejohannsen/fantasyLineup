@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .lineup import Lineup, PlayerProjection, optimize_lineup
-from .simulate import SimulatedOutcome, win_probability
+from .simulate import LiveState, SimulatedOutcome, win_probability
 
 # Below this the swap is noise, not signal: the simulation's own standard error
 # at 20k draws is a few tenths of a percent.
@@ -60,8 +60,7 @@ def optimize_for_win_probability(
     sds: dict[str, float],
     forced: dict[int, str] | None = None,
     draws: int = 20000,
-    my_banked: float = 0.0,
-    opponent_banked: float = 0.0,
+    live: dict[str, LiveState] | None = None,
     max_iterations: int = 12,
 ) -> WinProbLineup:
     """Hill climb from the expected-points optimum toward the best win chance."""
@@ -74,8 +73,7 @@ def optimize_for_win_probability(
             opponent_starters,
             sds,
             draws=draws,
-            my_banked=my_banked,
-            opponent_banked=opponent_banked,
+            live=live,
         )
 
     ev_outcome = evaluate(current)

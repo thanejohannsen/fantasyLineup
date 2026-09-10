@@ -67,6 +67,16 @@ class PlayerProjection:
     # re-derived downstream: inferring "out for the season" from a zeroed score
     # would silently break the moment a multiplier stopped being exactly zero.
     health_regime: str | None = None
+    # Where this number came from. Carried on the projection so any report can
+    # say whether the market touched it without re-deriving the blend --
+    # "18.0" reads very differently when Kalshi moved it than when it is
+    # Sleeper's own figure passed straight through.
+    market_shift: float = 0.0
+    market_coverage: float = 0.0
+
+    @property
+    def has_market(self) -> bool:
+        return self.market_coverage > 0.0
 
     def eligible_for(self, slot: str) -> bool:
         allowed = SLOT_ELIGIBILITY.get(slot)

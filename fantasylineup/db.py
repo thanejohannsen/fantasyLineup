@@ -118,6 +118,10 @@ CREATE TABLE IF NOT EXISTS games (
     -- Exact kickoff from ESPN's public scoreboard. Used both for the
     -- countdown and, alongside status, to decide whether a slot has locked.
     kickoff_utc TEXT,
+    -- Quarter and seconds left in it, so a player mid-game can be credited
+    -- with what he has banked and still carry the rest of his projection.
+    period      INTEGER,
+    clock       REAL,
     updated_at  TEXT NOT NULL,
     PRIMARY KEY (game_id, season)
 );
@@ -210,8 +214,25 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     return conn
 
 
+# Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS leaves
+# an existing table alone, and the scheduled job restores a cached database
+# rather than building one, so these have to be applied explicitly.
+_ADDED_COLUMNS: dict[str, dict[str, str]] = {
+    "games": {"period": "INTEGER", "clock": "REAL"},
+}
+
+
+def _apply_added_columns(conn: sqlite3.Connection) -> None:
+    for table, columns in _ADDED_COLUMNS.items():
+        present = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for name, decl in columns.items():
+            if name not in present:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    _apply_added_columns(conn)
     conn.commit()
 
 
