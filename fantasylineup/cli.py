@@ -406,8 +406,10 @@ def cmd_refresh(args: argparse.Namespace) -> int:
         # Trades and waivers are rest-of-season decisions that do not change
         # hour to hour. Refresh them well before the slate, not during it.
         want_moves = args.with_moves or (hours is not None and hours > 24)
-        if want_moves:
-            sync_projections(conn, client, cfg.league.season, None, scoring)
+        # Rest-of-season numbers are shown beside the weekly ones whether or not
+        # the trade search runs, so they are fetched every pass. One request,
+        # and a stale season column is worse than none.
+        sync_projections(conn, client, cfg.league.season, None, scoring)
 
         fits = {} if args.no_kalshi else fetch_market_fits(cfg.sources.kalshi_base)
         slots = starting_slots(league["roster_positions"])
@@ -429,6 +431,19 @@ def cmd_refresh(args: argparse.Namespace) -> int:
                     availability=cfg.health.availability(),
                 )
             return weekly[rid]
+
+        # Season totals for every rostered player, keyed by id so a renderer
+        # can look one up without re-deriving the blend.
+        season_points: dict[str, float] = {}
+        for rid_ in sorted(league_rosters):
+            for pl in blended_projections(
+                conn, league_rosters[rid_], cfg.league.season, REST_OF_SEASON,
+                scoring, fits, cfg.model.kalshi_max_shift,
+                health_multipliers=cfg.health.as_table(),
+                weekly_week=week,
+                return_weeks=cfg.health.return_weeks(),
+            )[0]:
+                season_points[pl.sleeper_id] = pl.points
 
         moves_html = _league_moves_html(
             conn, client, cfg, league, scoring, fits, week, avail, names
@@ -467,6 +482,7 @@ def cmd_refresh(args: argparse.Namespace) -> int:
                         draws=cfg.model.sim_draws, now=now,
                     ),
                     moves_html=moves_html.get(rid, ""),
+                    season_points=season_points,
                 )
             )
 
@@ -510,6 +526,7 @@ def _league_moves_html(
             cfg.model.kalshi_max_shift,
             health_multipliers=cfg.health.as_table(),
             weekly_week=week,
+            return_weeks=cfg.health.return_weeks(),
         )[0]
 
     rosters = {rid: build(ids) for rid, ids in all_rosters(conn, cfg.league.league_id).items()}

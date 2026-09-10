@@ -70,3 +70,18 @@ out_long = 0.00
 weekly_out = 0.00
 weekly_doubtful = 0.10
 weekly_questionable = 0.80
+
+# Known return weeks, entered by hand from news. No feed carries one: Sleeper
+# gives a status and a body part but no date, and its per-week injury_override
+# metadata is a record of weeks already missed, not a forecast.
+#
+# The value is the first week he plays. Setting it replaces the regime guess
+# with arithmetic -- the share of the remaining schedule he is available for --
+# which is why it is worth a minute of typing when news breaks.
+#
+# One caveat: Sleeper's season figure may already reflect part of the absence.
+# Josh Jacobs was carrying 87.2 while suspended, well under a starting back, so
+# prorating on top can double-count. It is still far better than the zero the
+# model gave him before it could express "back in week 7".
+[health.returns]
+# "Josh Jacobs" = 7   # six-game suspension, back week 7

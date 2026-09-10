@@ -22,6 +22,7 @@ from .model.health import (
     classify,
     is_structural,
     ros_multiplier,
+    returning_multiplier,
     weekly_multiplier,
 )
 from .model.projections import REST_OF_SEASON, latest_projections
@@ -125,6 +126,7 @@ def blended_projections(
     weekly_week: int | None = None,
     availability: Mapping[str, float] | None = None,
     apply_weekly_health: bool = True,
+    return_weeks: Mapping[str, int] | None = None,
 ) -> tuple[list[PlayerProjection], dict[str, BlendResult]]:
     """Build optimizer inputs with Kalshi folded into the Sleeper baseline.
 
@@ -199,7 +201,12 @@ def blended_projections(
             has_weekly_projection=(r["sleeper_id"] in weekly) or not weekly_known,
         )
         points = blend.blended
-        if is_ros:
+        returns_week = (return_weeks or {}).get((r["full_name"] or "").strip().lower())
+        if is_ros and returns_week is not None:
+            # A known return date beats every guess the regimes make. Written
+            # down by hand, because the news that carries it reaches no feed.
+            points *= returning_multiplier(returns_week, weekly_week or 1)
+        elif is_ros:
             points *= ros_multiplier(health, health_multipliers)
         elif apply_weekly_health:
             # Sleeper's weekly projection assumes he plays, and for Out and

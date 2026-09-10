@@ -346,3 +346,35 @@ def test_a_market_that_agrees_with_sleeper_shows_no_number():
 
     assert "K+0.0" not in body
     assert 'class="mkt"' in body and ">K</span>" in body
+
+
+def test_season_points_are_shown_beside_the_weekly_figure():
+    """Two horizons answer two questions: who to start, and what he is worth."""
+    advisory = _advisory_from(["QB1", "RB1", "RB2", "WR1"], ["QB1", "RB1", "RB2", "WR1"],
+                              ["QB", "RB", "RB", "WR"])
+    body = render_team_body(
+        TeamView(1, "T", advisory, season_points={"QB1": 275.4, "RB1": 295.0})
+    )
+    assert ">275<" in body and ">295<" in body
+    assert "<th>Recommended</th>" in body
+
+
+def test_a_player_with_no_season_number_is_blank_not_zero():
+    """An unknown is not the same claim as a projection of nothing."""
+    advisory = _advisory_from(["QB1"], ["QB1"], ["QB"])
+    body = render_team_body(TeamView(1, "T", advisory, season_points={}))
+    assert 'class="num season"></td>' in body
+
+
+def test_the_current_side_does_not_repeat_the_numbers():
+    """In most rows both sides hold the same player, so repeating the figures
+    doubled the table's width to say nothing, and pushed the recommended lineup
+    off a phone screen entirely."""
+    advisory = _advisory_from(["QB1", "RB1", "RB2", "WR1"], ["QB1", "RB1", "RB2", "WR1"],
+                              ["QB", "RB", "RB", "WR"])
+    body = render_team_body(TeamView(1, "T", advisory, season_points={"QB1": 275.0}))
+    lineup = re.search(r"<h2>Lineup</h2>(.*?)</table>", body, re.S).group(1)
+
+    assert lineup.count(">275<") == 1, "the season figure appears once, not twice"
+    # Four slots, one weekly figure each -- not one per side.
+    assert lineup.count('class="num ">') == 4

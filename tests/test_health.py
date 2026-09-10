@@ -16,6 +16,7 @@ from fantasylineup.model.health import (
     is_structural,
     ros_multiplier,
     weekly_multiplier,
+    returning_multiplier,
 )
 
 # (status, body_part, notes, has_weekly_projection)
@@ -113,6 +114,7 @@ def test_multipliers_are_overridable():
         "playing_diminished_structural",
         "playing_diminished_soft",
         "out_short",
+        "out_extended",
         "out_long",
     }
 
@@ -258,3 +260,86 @@ def test_grading_a_finished_week_is_not_haircut_by_today_s_designation():
 
     assert forward[0].points == 0.0, "a forward-looking week must rule him out"
     assert graded[0].points == pytest.approx(6.0), "a finished week keeps what was projected"
+
+
+# --------------------------------------------- out a while, but coming back
+
+
+def test_a_suspension_is_not_a_torn_achilles():
+    """Reported: Josh Jacobs valued at zero and refused in trades both ways.
+
+    The evidence for writing a player off is the ACL and Achilles cohort data,
+    whose recovery windows outrun the schedule. A suspension has an announced
+    end and a groin strain heals; reading that evidence onto them was the bug.
+    """
+    suspended = classify("NA", "Groin", None, has_weekly_projection=False)
+    assert suspended.regime is Regime.OUT_EXTENDED
+    assert ros_multiplier(suspended) > 0.0
+    assert suspended.is_tradeable, "an asset that returns is what a trade is for"
+
+
+def test_a_structural_tear_is_still_written_off():
+    torn = classify("IR", "Knee - ACL", None, has_weekly_projection=False)
+    assert torn.regime is Regime.OUT_LONG
+    assert ros_multiplier(torn) == 0.0
+    assert not torn.is_tradeable
+
+
+def test_a_known_return_week_prorates_the_rest_of_the_season():
+    """Six games out of eighteen is arithmetic, not judgment."""
+    assert returning_multiplier(7, 1) == pytest.approx(12 / 18)
+    assert returning_multiplier(7, 4) == pytest.approx(12 / 15)
+
+
+def test_a_player_already_back_is_worth_the_whole_remainder():
+    assert returning_multiplier(3, 7) == 1.0
+    assert returning_multiplier(7, 7) == 1.0
+
+
+def test_a_return_after_the_season_ends_is_worth_nothing():
+    assert returning_multiplier(19, 10) == 0.0
+
+
+def test_the_known_return_replaces_the_regime_guess():
+    """A date beats a default, so the two must not compound."""
+    import sqlite3
+
+    from fantasylineup.db import init_db
+    from fantasylineup.pipeline import blended_projections
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    init_db(conn)
+    conn.execute(
+        """INSERT INTO players (sleeper_id, full_name, position, fantasy_positions,
+                                team, injury_status, injury_body_part, updated_at)
+           VALUES ('1', 'Josh Jacobs', 'RB', '["RB"]', 'GB', 'NA', 'Groin', '2026-09-10')"""
+    )
+    conn.execute(
+        """INSERT INTO projections (source, season, week, sleeper_id, as_of, mean, stats)
+           VALUES ('sleeper', 2026, 0, '1', '2026-09-10', 90.0, '{"rec": 90.0}')"""
+    )
+    # Somebody has a week 1 projection, so the weekly table is populated and the
+    # "no data means unknown, not injured" guard does not fire. Jacobs is absent
+    # from it, which is exactly what being suspended looks like.
+    conn.execute(
+        """INSERT INTO players (sleeper_id, full_name, position, fantasy_positions,
+                                team, updated_at)
+           VALUES ('2', 'Someone Playing', 'RB', '["RB"]', 'GB', '2026-09-10')"""
+    )
+    conn.execute(
+        """INSERT INTO projections (source, season, week, sleeper_id, as_of, mean, stats)
+           VALUES ('sleeper', 2026, 1, '2', '2026-09-10', 10.0, '{"rec": 10.0}')"""
+    )
+    conn.commit()
+
+    scoring = {"rec": 1.0}
+    guessed, _ = blended_projections(conn, {"1"}, 2026, 0, scoring, {}, 0.0, weekly_week=1)
+    known, _ = blended_projections(
+        conn, {"1"}, 2026, 0, scoring, {}, 0.0, weekly_week=1,
+        return_weeks={"josh jacobs": 7},
+    )
+    conn.close()
+
+    assert guessed[0].points == pytest.approx(90.0 * 0.45), "the default guess"
+    assert known[0].points == pytest.approx(90.0 * 12 / 18), "arithmetic, not the guess"

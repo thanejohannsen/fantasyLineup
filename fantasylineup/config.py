@@ -7,7 +7,7 @@ config.toml, so the code carries no hardcoded league identity.
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dc_field
 from pathlib import Path
 
 DEFAULT_CONFIG_PATH = Path("config.toml")
@@ -72,6 +72,13 @@ class HealthConfig:
     weekly_out: float = 0.00
     weekly_doubtful: float = 0.10
     weekly_questionable: float = 0.80
+    # Player name -> first week he is back. Hand-entered from news, because no
+    # feed carries a return date.
+    returns: dict[str, int] = dc_field(default_factory=dict)
+
+    def return_weeks(self) -> dict[str, int]:
+        """Return weeks keyed by lowercased name, for a forgiving lookup."""
+        return {str(k).strip().lower(): int(v) for k, v in self.returns.items()}
 
     def as_table(self) -> dict[str, float]:
         return {

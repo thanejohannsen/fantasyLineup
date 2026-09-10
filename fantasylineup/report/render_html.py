@@ -11,7 +11,7 @@ identically offline and cannot break because a CDN changed.
 from __future__ import annotations
 
 import html
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from ..engine.locks import LockState
@@ -69,6 +69,9 @@ td:last-child, th:last-child { padding-right: 0; }
 th { font-size: .68rem; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
 tr:last-child td { border-bottom: 0; }
 .slot { color: var(--muted); font-size: .8rem; }
+/* Names stay on one line; the table scrolls instead. A name broken over three
+   lines is harder to read than a table you swipe. */
+.lineup td { white-space: nowrap; }
 /* The fixed width is a table-layout concern only; applying it to the inline
    spans used in the trade cards squeezes them into a one-word column. */
 td.slot, th.slot { width: 3.4rem; }
@@ -79,6 +82,18 @@ td.slot, th.slot { width: 3.4rem; }
 .empty { color: var(--muted); font-style: italic; }
 .note { color: var(--muted); font-size: .82rem; margin-top: .8rem; }
 .scroll { overflow-x: auto; }
+/* Let the wide tables scroll rather than squeeze. Wrapping every name onto two
+   lines to avoid a scrollbar trades a small inconvenience for an unreadable
+   column. */
+.scroll table { min-width: 40rem; }
+/* On a phone the recommended lineup is what you act on, and eight columns push
+   it off screen entirely. The current side keeps its name -- so a swap stays
+   legible -- and drops its numbers, which duplicate the other side on every row
+   where nothing changed. */
+@media (max-width: 40rem) {
+  .scroll table { min-width: 32rem; }
+  td, th { padding: .32rem .45rem; }
+}
 .trade { border-top: 1px solid var(--line); padding: .8rem 0; }
 .trade:first-of-type { border-top: 0; padding-top: 0; }
 .tradehead { margin-bottom: .35rem; }
@@ -130,6 +145,9 @@ tr.changed td { background: color-mix(in srgb, var(--accent) 7%, transparent); }
 tr.changed td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
 td.faded { color: var(--muted); text-decoration: line-through; }
 .pts { color: var(--muted); font-size: .78rem; font-variant-numeric: tabular-nums; }
+/* Season totals answer the trade question, not the start/sit one, so they sit
+   quieter than the weekly figure beside them. */
+.season { color: var(--muted); font-size: .82rem; }
 .mkt {
   color: var(--accent); font-size: .68rem; letter-spacing: .02em;
   border: 1px solid var(--accent); border-radius: 4px; padding: 0 .26rem;
@@ -295,20 +313,34 @@ def _aligned_slots(advisory):
     return out
 
 
-def _player_cell(player, *, faded: bool = False) -> str:
-    """Name, badges and opponent, with the projection in its own cell after it.
+def _season_cell(player, season_points, *, faded: bool = False, side: str = "") -> str:
+    """Rest-of-season points, blank where none is known rather than shown as 0."""
+    base = f"num season {side}".strip()
+    if player is None:
+        return f'<td class="{base}"></td>'
+    value = season_points.get(player.sleeper_id)
+    cls = f"{base} faded" if faded else base
+    shown = "" if value is None else f"{value:.0f}"
+    return f'<td class="{cls}">{shown}</td>'
+
+
+def _player_cell(player, *, faded: bool = False, with_points: bool = True) -> str:
+    """Name and badges, with the projection in its own cell after it.
 
     The number is a column rather than a trailing span so the figures line up
-    down the table and can be compared at a glance. Trailing it after the
-    opponent put a different amount of text in front of every number.
+    down the table. It is omitted on the current side: in most rows that side
+    holds the same player as the recommendation, so repeating both numbers
+    doubles the width of the table to say nothing. Where a row does differ, the
+    net gain is stated under the table, which is the figure being decided on.
     """
     if player is None:
-        return '<td class="empty">-</td><td class="num"></td>'
+        return '<td class="empty">-</td>' + ('<td class="num"></td>' if with_points else "")
     cls = "faded" if faded else ""
     opp = f' <span class="slot">vs {_esc(player.opponent)}</span>' if player.opponent else ""
+    points = f'<td class="num {cls}">{player.points:.1f}</td>' if with_points else ""
     return (
         f'<td class="{cls}">{_esc(player.name)}{_injury_html(player)}{_market_html(player)}'
-        f'{opp}</td><td class="num {cls}">{player.points:.1f}</td>'
+        f"{opp}</td>{points}"
     )
 
 
@@ -320,6 +352,10 @@ class TeamView:
     name: str
     advisory: Advisory
     moves_html: str = ""
+    # Rest-of-season points by player id. Shown beside the weekly figure because
+    # the two answer different questions -- one is who to start on Sunday, the
+    # other is what a player is worth in a trade.
+    season_points: dict[str, float] = field(default_factory=dict)
 
 
 def render_team_body(view: TeamView, hidden: bool = False) -> str:
@@ -347,8 +383,9 @@ def render_team_body(view: TeamView, hidden: bool = False) -> str:
         cls = "changed" if differs else ("locked" if state.locked else "")
         rows.append(
             f'<tr class="{cls}"><td class="slot">{_esc(slot)}</td>'
-            + _player_cell(now, faded=differs)
+            + _player_cell(now, faded=differs, with_points=False)
             + _player_cell(best)
+            + _season_cell(best, view.season_points)
             + _lock_cell(state)
             + "</tr>"
         )
@@ -367,13 +404,15 @@ def render_team_body(view: TeamView, hidden: bool = False) -> str:
     bench_rows = "".join(
         f'<tr><td class="slot">{_esc(b.position)}</td>'
         + _player_cell(b)
+        + _season_cell(b, view.season_points)
         + _lock_cell(a.lock_states.get(b.sleeper_id, _UNKNOWN))
         + "</tr>"
         for b in bench
     )
     bench_block = (
-        f'<div class="panel"><h2>Bench</h2><div class="scroll"><table>'
-        f'<tr><th>Pos</th><th>Player</th><th class="num">Proj</th>'
+        f'<div class="panel"><h2>Bench</h2><div class="scroll"><table class="lineup">'
+        f'<tr><th>Pos</th><th>Player</th><th class="num">Wk</th>'
+        f'<th class="num season">Season</th>'
         f'<th class="when">Kickoff</th></tr>'
         f"{bench_rows}</table></div></div>"
         if bench
@@ -424,16 +463,19 @@ def render_team_body(view: TeamView, hidden: bool = False) -> str:
     return (
         f'<section class="team" data-team="{view.roster_id}"{" hidden" if hidden else ""}>'
         f"{deadline}{headline}"
-        f'<div class="panel"><h2>Lineup</h2><div class="scroll"><table>'
-        f'<tr><th>Slot</th><th>Current</th><th class="num">Proj</th>'
-        f'<th>Recommended</th><th class="num">Proj</th>'
+        f'<div class="panel"><h2>Lineup</h2><div class="scroll"><table class="lineup">'
+        f'<tr><th>Slot</th><th>Current</th>'
+        f'<th>Recommended</th><th class="num">Wk</th>'
+        f'<th class="num season">Season</th>'
         f'<th class="when">Kickoff</th></tr>'
         f'{"".join(rows)}'
         f"</table></div>"
         f'<p class="note">{summary} <span class="mkt">K</span> marks a projection '
         f"the Kalshi market priced, carrying the shift where it moved one and "
         f"bare where the market agreed with Sleeper; everything else is Sleeper's "
-        f"own number.</p></div>"
+        f"own number. <b>Wk</b> is this week, <b>Season</b> the rest of it -- "
+        f"the first decides who to start, the second what a player is worth in a "
+        f"trade.</p></div>"
         f"{bench_block}"
         f"{moves_html}"
         f"</section>"

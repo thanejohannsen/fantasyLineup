@@ -202,7 +202,42 @@ exists:
 | `PLAYING_DIMINISHED`, structural | back from surgery, on the field | 0.90 |
 | `PLAYING_DIMINISHED`, soft tissue | knock, still playing | 1.00 |
 | `OUT_SHORT` | not playing, week to week | 0.40 |
+| `OUT_EXTENDED` | out for weeks, but returning | 0.45 |
 | `OUT_LONG` | not playing, recovery outruns the season | 0.00 |
+
+**Out for a while is not the same as gone.** Everything on IR, PUP or suspended
+used to route to `OUT_LONG` — worth zero, and refused in trades in both
+directions. But the evidence for writing a player off is the ACL and Achilles
+cohort data, whose recovery windows outrun the schedule; it says nothing about a
+suspension or a groin strain. Josh Jacobs, suspended, was valued at nothing.
+Only a *structural* injury now zeroes a player; a long absence he returns from
+is discounted and stays tradeable.
+
+### When you know the return date
+
+That default is still a guess, and a suspension is not guessable — the league
+announces its length. No feed carries it: Sleeper gives a status and a body part
+but no date, and its per-week `injury_override` metadata records weeks already
+missed rather than forecasting them.
+
+So write it down. `[health.returns]` in `config.toml` maps a player to the first
+week he plays, and the value follows by arithmetic — the share of the remaining
+schedule he is available for — instead of by judgment:
+
+```toml
+[health.returns]
+"Josh Jacobs" = 7   # six-game suspension, back week 7
+```
+
+At week 1 that makes him worth 12/18 of his remaining projection rather than the
+0.45 default, and it decays correctly as the season runs: by week 4 the same
+entry is worth 12/15.
+
+One caveat worth keeping in view. Sleeper's season figure may already reflect
+part of the absence — Jacobs was carrying 87.2 while suspended, well under a
+starting back — so prorating on top can double-count. It is still a large
+improvement on the zero the model gave him before it could express "back in
+week 7".
 
 `injury_status` is never used alone. `injury_start_date` is 0 of 782 populated
 upstream, so it carries no timing signal, and "Questionable" skews heavily toward
@@ -310,7 +345,7 @@ generates would be breaking new ground, which is also why the pitch text matters
 ## Development
 
 ```bash
-.venv/bin/python -m pytest        # 152 tests, no network required
+.venv/bin/python -m pytest        # 161 tests, no network required
 ```
 
 Tests run against captured real API responses in `fixtures/`, so they fail if an

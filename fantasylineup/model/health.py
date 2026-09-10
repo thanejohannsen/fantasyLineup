@@ -82,6 +82,11 @@ class Regime(str, Enum):
     HEALTHY = "healthy"
     PLAYING_DIMINISHED = "playing_diminished"
     OUT_SHORT = "out_short"
+    # Out for a long stretch but coming back: a suspension, or a soft-tissue
+    # injury serious enough for IR. Distinct from OUT_LONG because the evidence
+    # for zeroing a player is about torn ligaments and tendons, and says nothing
+    # about a groin strain or a six-game ban.
+    OUT_EXTENDED = "out_extended"
     OUT_LONG = "out_long"
 
 
@@ -91,6 +96,10 @@ DEFAULT_MULTIPLIERS: dict[str, float] = {
     "playing_diminished_structural": 0.90,
     "playing_diminished_soft": 1.00,
     "out_short": 0.40,
+    # Out for weeks, returning at an unknown point. A guess, and the honest way
+    # to improve it is to say when he is back -- see `returns_week`, which
+    # replaces this with arithmetic.
+    "out_extended": 0.45,
     "out_long": 0.00,
 }
 
@@ -138,7 +147,8 @@ class HealthStatus:
 
         A player with no remaining value should not be packaged in either
         direction: not sold as though he had value, and not acquired as though
-        he had value either.
+        he had value either. A player who is merely out for a while still has
+        value and is exactly the sort of asset a trade is for.
         """
         return self.regime is not Regime.OUT_LONG
 
@@ -247,9 +257,18 @@ def classify(
             Regime.PLAYING_DIMINISHED, status, injury_body_part, injury_notes, structural
         )
 
-    if status in LONG_TERM_STATUSES or structural:
+    if structural:
         return HealthStatus(
             Regime.OUT_LONG, status, injury_body_part, injury_notes, structural
+        )
+
+    if status in LONG_TERM_STATUSES:
+        # Out a while, but he returns. Zeroing him here was reading the
+        # ACL/Achilles evidence onto players it does not describe: Josh Jacobs,
+        # suspended with a groin listed, was valued at nothing and refused in
+        # trades in both directions.
+        return HealthStatus(
+            Regime.OUT_EXTENDED, status, injury_body_part, injury_notes, structural
         )
 
     return HealthStatus(Regime.OUT_SHORT, status, injury_body_part, injury_notes, structural)
@@ -270,6 +289,8 @@ def ros_multiplier(
         return table[key]
     if health.regime is Regime.OUT_SHORT:
         return table["out_short"]
+    if health.regime is Regime.OUT_EXTENDED:
+        return table["out_extended"]
     return table["out_long"]
 
 
@@ -298,3 +319,29 @@ def weekly_multiplier(
     # An unrecognised designation is still a designation; treating it as healthy
     # would make a new upstream code silently invisible.
     return table["questionable"]
+
+
+# Regular season length. Used only to prorate a known return date.
+SEASON_LAST_WEEK = 18
+
+
+def returning_multiplier(
+    returns_week: int, current_week: int, last_week: int = SEASON_LAST_WEEK
+) -> float:
+    """Share of the remaining schedule a player back in ``returns_week`` plays.
+
+    This is the honest form of the question the regimes only guess at. A
+    six-game suspension is a known quantity -- the league announces it -- and no
+    feed carries it, so once it is written down the value follows by arithmetic
+    rather than judgment.
+
+    One caveat worth keeping in view: Sleeper's rest-of-season figure may
+    already reflect some of the absence. Josh Jacobs was carrying 87.2 while
+    suspended, well under a starting back, so prorating on top of that can
+    double-count. It is still a large improvement on the zero he was given.
+    """
+    remaining = max(0, last_week - current_week + 1)
+    if remaining <= 0:
+        return 0.0
+    playable = max(0, last_week - max(returns_week, current_week) + 1)
+    return min(1.0, playable / remaining)
