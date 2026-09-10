@@ -8,7 +8,7 @@ import sys
 
 from .config import load_config
 from .db import open_db
-from .engine.lineup import starting_slots
+from .engine.lineup import optimize_lineup, starting_slots
 from .engine.confidence import assess_all
 from .engine.trades import best_trades_across_league, explain_trade
 from .engine.waivers import explain_no_targets, rank_waiver_targets, shortlist_candidates
@@ -20,6 +20,8 @@ from .model.calibration import (
 )
 from .model.projections import REST_OF_SEASON, latest_projections, sync_projections
 from .pipeline import (
+    MatchupContext,
+    all_matchups,
     all_rosters,
     current_starters,
     games_played,
@@ -32,7 +34,7 @@ from .pipeline import (
     standard_deviations,
 )
 from .report.advisory import build_advisory
-from .report.render_html import render_dashboard, render_moves_panel
+from .report.render_html import TeamView, render_dashboard, render_moves_panel
 from .report.recap import build_recap, sync_actuals
 from .report.render_text import render_advisory, render_moves, render_recap
 from .sources.kickoffs import sync_kickoffs
@@ -90,6 +92,31 @@ def _resolve_week(client: SleeperClient, requested: int | None) -> int:
     return int(state.get("display_week") or state.get("week") or 1)
 
 
+def _resolve_roster(conn, league_id: str, requested, default: int) -> int:
+    """Turn a --team value into a roster id.
+
+    Accepts a roster id or a team name, matched case-insensitively on a prefix
+    so `--team unc` finds "Unc Show". Ambiguity is an error rather than a guess:
+    reporting on the wrong manager's roster would look like a bug in the model.
+    """
+    if requested is None:
+        return default
+    names = roster_names(conn, league_id)
+    if str(requested).isdigit() and int(requested) in names:
+        return int(requested)
+    wanted = str(requested).strip().lower()
+    hits = [rid for rid, name in names.items() if name.lower().startswith(wanted)]
+    if len(hits) == 1:
+        return hits[0]
+    listing = ", ".join(sorted(names.values()))
+    if not hits:
+        raise LookupError(f"no team matching {requested!r}. Teams: {listing}")
+    raise LookupError(
+        f"{requested!r} matches {len(hits)} teams: "
+        + ", ".join(sorted(names[r] for r in hits))
+    )
+
+
 def cmd_advise(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     cfg.paths.ensure()
@@ -112,7 +139,10 @@ def cmd_advise(args: argparse.Namespace) -> int:
             if args.ros:
                 sync_projections(conn, client, cfg.league.season, None, scoring)
 
-        avail = compute_availability(conn, cfg.league.league_id, cfg.league.roster_id)
+        roster_id = _resolve_roster(
+            conn, cfg.league.league_id, getattr(args, "team", None), cfg.league.roster_id
+        )
+        avail = compute_availability(conn, cfg.league.league_id, roster_id)
         fits = {} if args.no_kalshi else fetch_market_fits(cfg.sources.kalshi_base)
 
         players, blends = blended_projections(
@@ -125,7 +155,7 @@ def cmd_advise(args: argparse.Namespace) -> int:
             cfg.model.kalshi_max_shift,
         )
 
-        matchup = find_opponent(conn, client, cfg.league.league_id, cfg.league.roster_id, week)
+        matchup = find_opponent(conn, client, cfg.league.league_id, roster_id, week)
         opponent_starters: list = []
         sds = standard_deviations(players, blends)
         if matchup.opponent_roster_id is not None:
@@ -143,8 +173,6 @@ def cmd_advise(args: argparse.Namespace) -> int:
             )
             # We cannot know what they will actually start, so assume they play
             # their best legal lineup. Assuming less would flatter our own odds.
-            from .engine.lineup import optimize_lineup
-
             opponent_starters = optimize_lineup(
                 opponent_players, starting_slots(league["roster_positions"])
             ).starters
@@ -153,7 +181,7 @@ def cmd_advise(args: argparse.Namespace) -> int:
         advisory = build_advisory(
             conn,
             avail.snapshot_id,
-            cfg.league.roster_id,
+            roster_id,
             players,
             league["roster_positions"],
             cfg.league.season,
@@ -169,9 +197,21 @@ def cmd_advise(args: argparse.Namespace) -> int:
     print(render_advisory(advisory, team_name=league.get("name", ""), blends=blends))
 
     if args.publish:
+        # One team only. `fl refresh` is what writes the full league page; this
+        # is the quick single-team publish, so the selector is omitted.
         target = cfg.paths.site / "index.html"
         target.write_text(
-            render_dashboard(advisory, league.get("name", "Fantasy"), moves_html=""),
+            render_dashboard(
+                league.get("name", "Fantasy"),
+                [
+                    TeamView(
+                        roster_id=roster_id,
+                        name=league.get("name", "Fantasy"),
+                        advisory=advisory,
+                    )
+                ],
+                default_roster_id=roster_id,
+            ),
             encoding="utf-8",
         )
         print(f"\nDashboard written to {target}")
@@ -207,7 +247,10 @@ def cmd_moves(args: argparse.Namespace) -> int:
             )
 
         fits = {} if args.no_kalshi else fetch_market_fits(cfg.sources.kalshi_base)
-        avail = compute_availability(conn, cfg.league.league_id, cfg.league.roster_id)
+        roster_id = _resolve_roster(
+            conn, cfg.league.league_id, getattr(args, "team", None), cfg.league.roster_id
+        )
+        avail = compute_availability(conn, cfg.league.league_id, roster_id)
         ros = REST_OF_SEASON
 
         # weekly_week tells the health model whether a player is actually
@@ -248,7 +291,7 @@ def cmd_moves(args: argparse.Namespace) -> int:
             rosters,
             names,
             slots,
-            cfg.league.roster_id,
+            roster_id,
             limit=args.limit,
             games_played=games_played(conn, cfg.league.season),
             jitter=cfg.trades.jitter,
@@ -266,7 +309,7 @@ def cmd_moves(args: argparse.Namespace) -> int:
             min_games=cfg.trades.min_games_for_contingency,
             require_stable=cfg.trades.require_stable,
         )
-        my_set = current_starters(conn, cfg.league.league_id, cfg.league.roster_id, my_players)
+        my_set = current_starters(conn, cfg.league.league_id, roster_id, my_players)
         rationales = {
             i: explain_trade(
                 p,
@@ -285,7 +328,7 @@ def cmd_moves(args: argparse.Namespace) -> int:
         }
 
         activity = league_activity(
-            conn, client, cfg.league.league_id, current_week, cfg.league.roster_id
+            conn, client, cfg.league.league_id, current_week, roster_id
         )
 
     print(
@@ -355,94 +398,130 @@ def cmd_refresh(args: argparse.Namespace) -> int:
             sync_projections(conn, client, cfg.league.season, None, scoring)
 
         fits = {} if args.no_kalshi else fetch_market_fits(cfg.sources.kalshi_base)
+        slots = starting_slots(league["roster_positions"])
         avail = compute_availability(conn, cfg.league.league_id, cfg.league.roster_id)
-        players, blends = blended_projections(
-            conn, avail.my_players, cfg.league.season, week, scoring, fits,
+        league_rosters = all_rosters(conn, cfg.league.league_id)
+        names = roster_names(conn, cfg.league.league_id)
+        matchups = all_matchups(conn, client, cfg.league.league_id, week)
+
+        # Every team is also exactly one other team's opponent, so memoising the
+        # weekly blend halves the work rather than merely tidying it.
+        weekly: dict[int, tuple] = {}
+
+        def weekly_for(rid: int):
+            if rid not in weekly:
+                weekly[rid] = blended_projections(
+                    conn, league_rosters.get(rid, set()), cfg.league.season, week,
+                    scoring, fits, cfg.model.kalshi_max_shift,
+                )
+            return weekly[rid]
+
+        moves_html = _league_moves_html(
+            conn, client, cfg, league, scoring, fits, week, avail, names
+        ) if want_moves else {}
+
+        views: list[TeamView] = []
+        for rid in sorted(league_rosters):
+            players, blends = weekly_for(rid)
+            matchup = matchups.get(rid) or MatchupContext(None, "unknown", 0.0, 0.0)
+            sds = standard_deviations(players, blends)
+            opponent_starters: list = []
+            if matchup.opponent_roster_id is not None:
+                opp_players, opp_blends = weekly_for(matchup.opponent_roster_id)
+                opponent_starters = optimize_lineup(opp_players, slots).starters
+                sds.update(standard_deviations(opp_players, opp_blends))
+
+            views.append(
+                TeamView(
+                    roster_id=rid,
+                    name=names.get(rid, f"roster {rid}"),
+                    advisory=build_advisory(
+                        conn, avail.snapshot_id, rid, players,
+                        league["roster_positions"], cfg.league.season, week,
+                        opponent_starters=opponent_starters,
+                        opponent_name=matchup.opponent_name,
+                        sds=sds, my_banked=matchup.my_banked,
+                        opponent_banked=matchup.opponent_banked,
+                        draws=cfg.model.sim_draws, now=now,
+                    ),
+                    moves_html=moves_html.get(rid, ""),
+                )
+            )
+
+    # Thane's team first, then the rest alphabetically: the page opens on his
+    # own team, and the others are a list to scan rather than a roster order
+    # nobody knows by heart.
+    views.sort(key=lambda v: (v.roster_id != cfg.league.roster_id, v.name.lower()))
+    target = cfg.paths.site / "index.html"
+    target.write_text(
+        render_dashboard(
+            league.get("name", "Fantasy"), views, default_roster_id=cfg.league.roster_id
+        ),
+        encoding="utf-8",
+    )
+    mine = matchups.get(cfg.league.roster_id)
+    print(f"Dashboard written to {target}")
+    print(
+        f"Week {week} vs {mine.opponent_name if mine else 'unknown'}; "
+        f"{len(views)} teams; moves refreshed: {want_moves}"
+    )
+    return 0
+
+
+def _league_moves_html(
+    conn, client, cfg, league, scoring, fits, week, avail, names
+) -> dict[int, str]:
+    """Waiver and trade panels for every team, keyed by roster id.
+
+    Run once for the whole league rather than once per team. The projection
+    blend for all twelve rosters, the free-agent pool and the games-played
+    table are identical whichever seat you are sitting in; only the perspective
+    passed to the trade search changes.
+    """
+    slots = starting_slots(league["roster_positions"])
+    roster_limit = len([s for s in league["roster_positions"] if s != "IR"])
+    ros = REST_OF_SEASON
+
+    def build(ids):
+        return blended_projections(
+            conn, ids, cfg.league.season, ros, scoring, fits,
             cfg.model.kalshi_max_shift,
+            health_multipliers=cfg.health.as_table(),
+            weekly_week=week,
+        )[0]
+
+    rosters = {rid: build(ids) for rid, ids in all_rosters(conn, cfg.league.league_id).items()}
+    # Availability is derived by subtraction, so the free-agent pool is the same
+    # for everyone; only who can use it differs.
+    candidates = build(
+        shortlist_candidates(
+            conn, avail.free_agents, latest_projections(conn, cfg.league.season, ros)
         )
+    )
+    played = games_played(conn, cfg.league.season)
+    tuning = dict(
+        games_played=played,
+        jitter=cfg.trades.jitter,
+        draws=cfg.trades.draws,
+        min_games=cfg.trades.min_games_for_contingency,
+        require_stable=cfg.trades.require_stable,
+    )
 
-        matchup = find_opponent(conn, client, cfg.league.league_id, cfg.league.roster_id, week)
-        sds = standard_deviations(players, blends)
-        opponent_starters: list = []
-        if matchup.opponent_roster_id is not None:
-            opp_ids = roster_players_for(conn, cfg.league.league_id, matchup.opponent_roster_id)
-            opp_players, opp_blends = blended_projections(
-                conn, opp_ids, cfg.league.season, week, scoring, fits, cfg.model.kalshi_max_shift
-            )
-            from .engine.lineup import optimize_lineup
-
-            opponent_starters = optimize_lineup(
-                opp_players, starting_slots(league["roster_positions"])
-            ).starters
-            sds.update(standard_deviations(opp_players, opp_blends))
-
-        advisory = build_advisory(
-            conn, avail.snapshot_id, cfg.league.roster_id, players,
-            league["roster_positions"], cfg.league.season, week,
-            opponent_starters=opponent_starters, opponent_name=matchup.opponent_name,
-            sds=sds, my_banked=matchup.my_banked, opponent_banked=matchup.opponent_banked,
-            draws=cfg.model.sim_draws, now=now,
+    out: dict[int, str] = {}
+    for rid, mine in rosters.items():
+        proposals = best_trades_across_league(
+            mine, rosters, names, slots, rid, limit=4, **tuning
         )
-
-        moves_html = ""
-        if want_moves:
-            slots = starting_slots(league["roster_positions"])
-            roster_limit = len([s for s in league["roster_positions"] if s != "IR"])
-            ros = REST_OF_SEASON
-
-            def build(ids):
-                return blended_projections(
-                    conn,
-                    ids,
-                    cfg.league.season,
-                    ros,
-                    scoring,
-                    fits,
-                    cfg.model.kalshi_max_shift,
-                    health_multipliers=cfg.health.as_table(),
-                    weekly_week=week,
-                )[0]
-
-            my_ros = build(avail.my_players)
-            pool = shortlist_candidates(
-                conn, avail.free_agents, latest_projections(conn, cfg.league.season, ros)
-            )
-            targets = rank_waiver_targets(
-                my_ros, build(pool), slots, roster_limit=roster_limit, limit=5
-            )
-            rosters = {
-                rid: build(ids) for rid, ids in all_rosters(conn, cfg.league.league_id).items()
-            }
-            proposals = best_trades_across_league(
-                my_ros,
-                rosters,
-                roster_names(conn, cfg.league.league_id),
-                slots,
-                cfg.league.roster_id,
-                limit=4,
-                games_played=games_played(conn, cfg.league.season),
-                jitter=cfg.trades.jitter,
-                draws=cfg.trades.draws,
-                min_games=cfg.trades.min_games_for_contingency,
-                require_stable=cfg.trades.require_stable,
-            )
-            confidences = assess_all(
-                proposals,
-                my_ros,
-                slots,
-                games_played=games_played(conn, cfg.league.season),
-                jitter=cfg.trades.jitter,
-                draws=cfg.trades.draws,
-                min_games=cfg.trades.min_games_for_contingency,
-                require_stable=cfg.trades.require_stable,
-            )
-            my_set = current_starters(
-                conn, cfg.league.league_id, cfg.league.roster_id, my_ros
-            )
-            rationales = {
+        my_set = current_starters(conn, cfg.league.league_id, rid, mine)
+        out[rid] = render_moves_panel(
+            rank_waiver_targets(
+                mine, candidates, slots, roster_limit=roster_limit, limit=5
+            ),
+            proposals,
+            {
                 i: explain_trade(
                     p,
-                    my_ros,
+                    mine,
                     rosters[p.partner_roster_id],
                     slots,
                     my_starters=my_set,
@@ -454,22 +533,14 @@ def cmd_refresh(args: argparse.Namespace) -> int:
                     ),
                 )
                 for i, p in enumerate(proposals)
-            }
-            activity = league_activity(
-                conn, client, cfg.league.league_id, week, cfg.league.roster_id
-            )
-            moves_html = render_moves_panel(
-                targets, proposals, rationales, activity, confidences
-            )
-
-    target = cfg.paths.site / "index.html"
-    target.write_text(
-        render_dashboard(advisory, league.get("name", "Fantasy"), moves_html=moves_html),
-        encoding="utf-8",
-    )
-    print(f"Dashboard written to {target}")
-    print(f"Week {week} vs {matchup.opponent_name}; moves refreshed: {want_moves}")
-    return 0
+            },
+            league_activity(conn, client, cfg.league.league_id, week, rid),
+            assess_all(proposals, mine, slots, **tuning),
+            # Element ids must be unique across the whole document, not just
+            # within one team's section.
+            prefix=f"-{rid}-",
+        )
+    return out
 
 
 def cmd_recap(args: argparse.Namespace) -> int:
@@ -601,12 +672,18 @@ def main(argv: list[str] | None = None) -> int:
     p_advise.add_argument(
         "--publish", action="store_true", help="also write the GitHub Pages dashboard"
     )
+    p_advise.add_argument(
+        "--team", default=None, help="another manager's team, by name or roster id"
+    )
     p_advise.set_defaults(func=cmd_advise)
 
     p_moves = sub.add_parser("moves", help="waiver targets and trade offers")
     p_moves.add_argument("--limit", type=int, default=5)
     p_moves.add_argument("--no-refresh", action="store_true")
     p_moves.add_argument("--no-kalshi", action="store_true")
+    p_moves.add_argument(
+        "--team", default=None, help="another manager's team, by name or roster id"
+    )
     p_moves.set_defaults(func=cmd_moves)
 
     p_refresh = sub.add_parser("refresh", help="scheduled pass: sync, advise, publish dashboard")

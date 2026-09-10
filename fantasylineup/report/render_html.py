@@ -11,6 +11,7 @@ identically offline and cannot break because a CDN changed.
 from __future__ import annotations
 
 import html
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from ..engine.locks import LockState
@@ -101,6 +102,20 @@ td.slot, th.slot { width: 3.4rem; }
 .feed { margin: 0; padding-left: 1.1rem; font-size: .86rem; }
 .feed li { margin-bottom: .25rem; }
 .feed li.mine { color: var(--accent); font-weight: 600; }
+/* The UA default would cover this, but the page carries eleven hidden sections
+   and a stylesheet quirk that revealed them would be a mess rather than a
+   glitch, so say it explicitly. */
+.team[hidden] { display: none; }
+.teamsel { display: flex; align-items: center; gap: .5rem; margin: 0 0 1rem; }
+.teamsel label {
+  color: var(--muted); font-size: .78rem; text-transform: uppercase;
+  letter-spacing: .06em;
+}
+.teamsel select {
+  flex: 1; max-width: 22rem; padding: .4rem .5rem; font: inherit;
+  color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 6px;
+}
 """
 
 
@@ -129,6 +144,34 @@ _SCRIPT = """<script>
   }
   tick();
   setInterval(tick, 30000);
+
+  // Team switching. Every team is already in the document, so this only
+  // toggles visibility -- there is nothing to fetch and no state to rebuild.
+  var picker = document.getElementById("team");
+  if (picker) {
+    var KEY = "fantasylineup.team";
+    function show(id) {
+      var found = false;
+      document.querySelectorAll("section.team").forEach(function (el) {
+        var mine = el.getAttribute("data-team") === id;
+        el.hidden = !mine;
+        if (mine) found = true;
+      });
+      return found;
+    }
+    // A remembered team can disappear -- someone leaves the league, or the page
+    // is opened in a browser carrying a stale id -- so fall back to the server's
+    // choice rather than hiding every section.
+    try {
+      var saved = localStorage.getItem(KEY);
+      if (saved && saved !== picker.value && show(saved)) picker.value = saved;
+    } catch (e) {}
+    picker.addEventListener("change", function () {
+      show(picker.value);
+      try { localStorage.setItem(KEY, picker.value); } catch (e) {}
+      window.scrollTo(0, 0);
+    });
+  }
 
   document.querySelectorAll(".copy").forEach(function (btn) {
     btn.addEventListener("click", function () {
@@ -160,9 +203,20 @@ def _injury_html(player) -> str:
     return f' <span class="injury">{_esc(label)}</span>'
 
 
-def render_dashboard(advisory: Advisory, team_name: str, moves_html: str = "") -> str:
-    a = advisory
-    generated = a.generated_at.strftime("%a %d %b %Y, %H:%M UTC")
+@dataclass(frozen=True)
+class TeamView:
+    """One team's report, ready to render into the shared page."""
+
+    roster_id: int
+    name: str
+    advisory: Advisory
+    moves_html: str = ""
+
+
+def render_team_body(view: TeamView, hidden: bool = False) -> str:
+    """One team's panels, as a section the selector can show or hide."""
+    a = view.advisory
+    moves_html = view.moves_html
 
     rows = []
     for i, (slot, player) in enumerate(a.optimal.describe()):
@@ -241,18 +295,68 @@ def render_dashboard(advisory: Advisory, team_name: str, moves_html: str = "") -
             f"<small>projected points</small></div></div>"
         )
 
+    # The next lock belongs to the team being viewed, not to the page, so it
+    # lives inside the section rather than in the shared header.
     deadline = ""
-    deadline_attr = ""
     if a.deadline is not None:
         # "Next lock" sits outside the span: the browser overwrites the whole
         # textContent of a [data-kickoff] element, so a prefix placed inside it
         # was being wiped the moment the script ran.
-        deadline_attr = f' data-kickoff="{a.deadline.isoformat()}"'
         deadline = (
-            "Next lock "
-            f'<span class="when"{deadline_attr}>{_esc(f"{a.deadline:%a %H:%M UTC}")}</span>'
+            f'<div class="sub">Next lock <span class="when"'
+            f' data-kickoff="{a.deadline.isoformat()}">'
+            f'{_esc(f"{a.deadline:%a %H:%M UTC}")}</span></div>'
         )
-    
+
+    return (
+        f'<section class="team" data-team="{view.roster_id}"{" hidden" if hidden else ""}>'
+        f"{deadline}{headline}{changes_block}"
+        f'<div class="panel"><h2>Recommended lineup</h2><div class="scroll"><table>'
+        f'<tr><th>Slot</th><th>Player</th><th class="num">Proj</th>'
+        f'<th class="when">Locks</th></tr>'
+        f'{"".join(rows)}'
+        f"</table></div></div>"
+        f"{moves_html}"
+        f"</section>"
+    )
+
+
+def _team_selector(teams: list[TeamView], default_roster_id: int) -> str:
+    """Dropdown over the league. Omitted when there is only one team to show."""
+    if len(teams) < 2:
+        return ""
+    options = "".join(
+        f'<option value="{t.roster_id}"'
+        f'{" selected" if t.roster_id == default_roster_id else ""}>'
+        f"{_esc(t.name)}</option>"
+        for t in teams
+    )
+    return (
+        f'<div class="teamsel"><label for="team">Viewing</label>'
+        f'<select id="team">{options}</select></div>'
+    )
+
+
+def render_dashboard(
+    league_name: str, teams: list[TeamView], default_roster_id: int | None = None
+) -> str:
+    """The whole page: one section per team, one of them visible.
+
+    Every team is rendered into the same document rather than into a file each.
+    The report is a few kilobytes per team, so twelve of them cost less than one
+    image, and switching becomes instant with nothing to fetch.
+    """
+    if not teams:
+        raise ValueError("a dashboard needs at least one team")
+    if default_roster_id is None or all(t.roster_id != default_roster_id for t in teams):
+        default_roster_id = teams[0].roster_id
+
+    generated = teams[0].advisory.generated_at.strftime("%a %d %b %Y, %H:%M UTC")
+    # Only the default team is visible on load. The script may switch to a
+    # remembered choice, but the page is already correct without it.
+    sections = "".join(
+        render_team_body(t, hidden=t.roster_id != default_roster_id) for t in teams
+    )
 
     # A complete document: GitHub Pages serves the file verbatim, with no
     # wrapper of its own.
@@ -262,20 +366,15 @@ def render_dashboard(advisory: Advisory, team_name: str, moves_html: str = "") -
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>{_esc(team_name)} lineup</title>
+<title>{_esc(league_name)} lineup</title>
 <style>{_STYLE}</style>
 </head>
 <body>
 <div class="wrap">
-  <h1>{_esc(team_name)}</h1>
-  <div class="sub">Updated {generated}{" &middot; " + deadline if deadline else ""}</div>
-  {headline}
-  {changes_block}
-  <div class="panel"><h2>Recommended lineup</h2><div class="scroll"><table>
-    <tr><th>Slot</th><th>Player</th><th class="num">Proj</th><th class="when">Locks</th></tr>
-    {"".join(rows)}
-  </table></div></div>
-  {moves_html}
+  <h1>{_esc(league_name)}</h1>
+  <div class="sub stamp">Updated {generated}</div>
+  {_team_selector(teams, default_roster_id)}
+  {sections}
   <div class="panel"><h2>How to read this</h2>
     <p class="note">Projections blend Sleeper with Kalshi prop markets, capped by how much
     of a player's scoring the market actually prices. There is no rushing-yards market,
@@ -291,8 +390,14 @@ def render_dashboard(advisory: Advisory, team_name: str, moves_html: str = "") -
 
 
 def render_moves_panel(
-    targets, proposals, rationales=None, activity=None, confidences=None
+    targets, proposals, rationales=None, activity=None, confidences=None, prefix: str = ""
 ) -> str:
+    """Waiver and trade panels for one team.
+
+    ``prefix`` namespaces every element id. The page carries a section per team
+    and the proposal index restarts at zero in each, so without it every Copy
+    button on the page would resolve to the first team's message.
+    """
     """Waiver and trade panel, appended to the dashboard."""
     parts = []
 
@@ -322,8 +427,8 @@ def render_moves_panel(
             if r:
                 pitch = (
                     f'<div class="pitchwrap">'
-                    f'<button class="copy" data-copy="pitch{i}">Copy message</button>'
-                    f'<pre class="pitch" id="pitch{i}">{_esc(r.pitch)}</pre></div>'
+                    f'<button class="copy" data-copy="pitch{prefix}{i}">Copy message</button>'
+                    f'<pre class="pitch" id="pitch{prefix}{i}">{_esc(r.pitch)}</pre></div>'
                 )
             badge = (
                 '<span class="badge">Send this one</span>'

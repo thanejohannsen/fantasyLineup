@@ -44,6 +44,12 @@ hand in the app.
   discounted rather than written off; and any injured player in a proposal is
   named in the message, because the other manager sees the designation in his own
   app regardless.
+- **Reports on any team in the league, not just yours.** A dropdown switches the
+  whole page to another manager's seat: their optimal lineup, their waiver
+  targets, their best trades with any of the other eleven. Useful as scouting --
+  the offers another manager should want are the ones he is most likely to
+  accept -- and as a check on the model, since a claim about someone else's
+  roster is one you can verify in the app in ten seconds.
 - **Publishes a dashboard** to GitHub Pages, refreshed hourly by Actions.
 
 ## Quick start
@@ -56,7 +62,12 @@ fl advise               # lineup for the current week
 fl moves                # waiver targets and trade offers
 fl recap --week 3       # what happened, and what to learn
 fl refresh              # one scheduled pass; writes docs/index.html
+fl moves --team unc     # the same, from another manager's seat
 ```
+
+`--team` takes a roster id or a name matched on a case-insensitive prefix, and
+refuses an ambiguous one rather than guessing: reporting on the wrong manager's
+roster looks like a bug in the model, not a typo in the command.
 
 ## Data sources
 
@@ -247,7 +258,7 @@ generates would be breaking new ground, which is also why the pitch text matters
 ## Development
 
 ```bash
-.venv/bin/python -m pytest        # 122 tests, no network required
+.venv/bin/python -m pytest        # 128 tests, no network required
 ```
 
 Tests run against captured real API responses in `fixtures/`, so they fail if an

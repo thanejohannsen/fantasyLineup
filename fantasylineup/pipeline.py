@@ -35,15 +35,14 @@ class MatchupContext:
     opponent_banked: float = 0.0
 
 
-def find_opponent(
-    conn: sqlite3.Connection, client: SleeperClient, league_id: str, roster_id: int, week: int
+def _resolve_matchup(
+    entries: list[dict[str, Any]], names: Mapping[int, str], roster_id: int
 ) -> MatchupContext:
-    """Resolve this week's opponent from the matchup pairing.
+    """Pair one roster against its opponent within an already-fetched week.
 
     ``points`` on a matchup entry is what has already been scored this week, so
     it doubles as the banked total once games start.
     """
-    entries = client.matchups(league_id, week)
     mine = next((m for m in entries if m.get("roster_id") == roster_id), None)
     if mine is None or mine.get("matchup_id") is None:
         return MatchupContext(None, "unknown", 0.0, 0.0)
@@ -60,24 +59,44 @@ def find_opponent(
         return MatchupContext(None, "bye", float(mine.get("points") or 0.0), 0.0)
 
     opponent_id = int(theirs["roster_id"])
-    row = conn.execute(
-        """SELECT COALESCE(u.team_name, u.display_name) AS name
-           FROM roster_players rp
-           LEFT JOIN league_users u
-             ON u.user_id = rp.owner_id AND u.league_id = ?
-           WHERE rp.roster_id = ? AND rp.snapshot_id = (
-               SELECT MAX(snapshot_id) FROM roster_snapshots WHERE league_id = ?)
-           LIMIT 1""",
-        (league_id, opponent_id, league_id),
-    ).fetchone()
-    name = row["name"] if row else None
-
     return MatchupContext(
         opponent_roster_id=opponent_id,
-        opponent_name=name or f"roster {opponent_id}",
+        opponent_name=names.get(opponent_id) or f"roster {opponent_id}",
         my_banked=float(mine.get("points") or 0.0),
         opponent_banked=float(theirs.get("points") or 0.0),
     )
+
+
+def find_opponent(
+    conn: sqlite3.Connection,
+    client: SleeperClient,
+    league_id: str,
+    roster_id: int,
+    week: int,
+    entries: list[dict[str, Any]] | None = None,
+) -> MatchupContext:
+    """Resolve this week's opponent for one roster.
+
+    ``entries`` lets a caller that already holds the week's matchups pass them
+    in. The endpoint is deliberately uncached -- live scores have to be fresh --
+    so resolving twelve rosters without it would be twelve identical requests.
+    """
+    if entries is None:
+        entries = client.matchups(league_id, week)
+    return _resolve_matchup(entries, roster_names(conn, league_id), roster_id)
+
+
+def all_matchups(
+    conn: sqlite3.Connection, client: SleeperClient, league_id: str, week: int
+) -> dict[int, MatchupContext]:
+    """Every roster's opponent for the week, from a single fetch."""
+    entries = client.matchups(league_id, week)
+    names = roster_names(conn, league_id)
+    return {
+        int(m["roster_id"]): _resolve_matchup(entries, names, int(m["roster_id"]))
+        for m in entries
+        if m.get("roster_id") is not None
+    }
 
 
 def blended_projections(
