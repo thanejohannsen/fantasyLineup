@@ -294,7 +294,7 @@ generates would be breaking new ground, which is also why the pitch text matters
 ## Development
 
 ```bash
-.venv/bin/python -m pytest        # 142 tests, no network required
+.venv/bin/python -m pytest        # 144 tests, no network required
 ```
 
 Tests run against captured real API responses in `fixtures/`, so they fail if an

@@ -763,3 +763,29 @@ def test_a_bye_clash_the_roster_already_had_is_not_reported():
 
     rationale = explain_trade(proposal, roster, [p("Filler", "RB", 100.0)], slots)
     assert not any("week 11" in c for c in rationale.caveats)
+
+
+def test_the_outgoing_message_agrees_in_number():
+    """Agreement errors matter most here -- this text goes to a league mate.
+
+    "Jakobi Meyers and Brock Purdy fills a hole for me" shipped in a live pitch,
+    which is the one place a slip is read by someone else.
+    """
+    slots = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX"]
+    roster, real, qb, _, _ = _my_side(slots)
+    partner = [p("Filler", "RB", 100.0)]
+
+    two = explain_trade(
+        TradeProposal(
+            3, "them", (qb,), (p("Meyers", "WR", 169.0), p("Purdy", "QB", 264.0)), 22.0, 3.0
+        ),
+        roster, partner, slots, my_starters=real,
+    ).pitch
+    assert "fills a hole" not in two
+    assert "fill a hole" in two
+
+    one = explain_trade(
+        TradeProposal(3, "them", (qb,), (p("Purdy", "QB", 300.0),), 22.0, 3.0),
+        roster, partner, slots, my_starters=real,
+    ).pitch
+    assert "fills a hole" in one

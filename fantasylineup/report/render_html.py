@@ -58,7 +58,14 @@ h1 { font-size: 1.4rem; margin: 0 0 .2rem; letter-spacing: -.01em; }
 .headline small { font-size: .8rem; font-weight: 400; color: var(--muted); }
 .posture { color: var(--accent); font-size: .9rem; margin-top: .3rem; }
 table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-td, th { padding: .32rem 0; text-align: left; border-bottom: 1px solid var(--line); }
+/* Horizontal padding between columns, but flush at the table's own edges. With
+   zero padding a right-aligned number runs straight into the left-aligned text
+   of the next column -- "16.2Jayden Daniels", and a "PROJRECOMMENDED" header. */
+td, th {
+  padding: .32rem .6rem; text-align: left; border-bottom: 1px solid var(--line);
+}
+td:first-child, th:first-child { padding-left: 0; }
+td:last-child, th:last-child { padding-right: 0; }
 th { font-size: .68rem; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
 tr:last-child td { border-bottom: 0; }
 .slot { color: var(--muted); font-size: .8rem; }
@@ -223,10 +230,20 @@ def _market_html(player) -> str:
     """
     if not getattr(player, "has_market", False):
         return ""
+    # A shift that rounds to zero is shown as a bare K. "K+0.0" reads as a
+    # claim the market moved the number by nothing, when what happened is that
+    # the market priced him and agreed with Sleeper -- which is information,
+    # but not a number.
+    moved = abs(player.market_shift) >= 0.05
+    label = f"K{player.market_shift:+.1f}" if moved else "K"
+    detail = (
+        f"Kalshi moved this {player.market_shift:+.1f} points"
+        if moved
+        else "Kalshi prices this player and agrees with Sleeper"
+    )
     return (
-        f' <span class="mkt" title="Kalshi moved this {player.market_shift:+.1f} points; '
-        f'the market prices {player.market_coverage:.0%} of his scoring">'
-        f"K{player.market_shift:+.1f}</span>"
+        f' <span class="mkt" title="{detail}; the market prices '
+        f'{player.market_coverage:.0%} of his scoring">{label}</span>'
     )
 
 
@@ -414,7 +431,8 @@ def render_team_body(view: TeamView, hidden: bool = False) -> str:
         f'{"".join(rows)}'
         f"</table></div>"
         f'<p class="note">{summary} <span class="mkt">K</span> marks a projection '
-        f"the Kalshi market moved, and by how much; everything else is Sleeper's "
+        f"the Kalshi market priced, carrying the shift where it moved one and "
+        f"bare where the market agreed with Sleeper; everything else is Sleeper's "
         f"own number.</p></div>"
         f"{bench_block}"
         f"{moves_html}"

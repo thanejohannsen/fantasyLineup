@@ -550,22 +550,30 @@ def explain_trade(
 
     # A short, true reason for wanting it. Saying plainly what I get out of the
     # deal reads as straightforward rather than as an angle being worked.
+    if sending_benched:
+        # Contractions carry apostrophes, so the variants are chosen before the
+        # f-string rather than inside it.
+        is_are = _agree(sending_benched, "is", "are")
+        pronoun = _agree(sending_benched, "he", "they")
+        negated = _agree(sending_benched, "doesn't", "don't")
+        not_cracking = _agree(sending_benched, "isn't", "aren't")
+        names = _names(tuple(sending_benched))
     if sending_benched and blocked_by:
         lines.append(
-            f"On my end {_names(tuple(sending_benched))} is behind "
-            f"{blocked_by.name}, so he doesn't start for me."
+            f"On my end {names} {is_are} behind {blocked_by.name}, "
+            f"so {pronoun} {negated} start for me."
         )
     elif sending_benched:
-        lines.append(
-            f"On my end {_names(tuple(sending_benched))} isn't cracking my lineup."
-        )
+        lines.append(f"On my end {names} {not_cracking} cracking my lineup.")
     elif len(proposal.give) > len(proposal.get):
         lines.append(
             "I'm carrying more depth than I can start and would rather run one "
             "player I can actually use."
         )
     elif receiving_starter:
-        lines.append(f"{get_names} fills a hole for me.")
+        lines.append(
+            f"{get_names} {_agree(proposal.get, 'fills', 'fill')} a hole for me."
+        )
 
     # Any injury on either side is stated before the closing line. Selling an
     # injured player is legitimate; making an affirmative case for him while

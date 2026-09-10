@@ -326,3 +326,23 @@ def test_trade_caveats_reach_the_page():
         },
     )
     assert "week 7 bye" in panel
+
+
+def test_a_market_that_agrees_with_sleeper_shows_no_number():
+    """"K+0.0" reads as "the market moved this by nothing", which is not a fact.
+
+    A ladder that prices a player and lands where Sleeper already was is worth
+    marking -- the projection is corroborated -- but the figure is noise.
+    """
+    import dataclasses
+
+    advisory = _advisory_from(["QB1"], ["QB1"], ["QB"])
+    agreed = dataclasses.replace(
+        advisory.optimal.assignments[0], market_shift=0.02, market_coverage=0.9
+    )
+    advisory.optimal.assignments[0] = agreed
+    advisory.current.assignments[0] = agreed
+    body = render_team_body(TeamView(1, "T", advisory))
+
+    assert "K+0.0" not in body
+    assert 'class="mkt"' in body and ">K</span>" in body
