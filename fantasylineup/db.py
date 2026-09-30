@@ -127,10 +127,12 @@ CREATE TABLE IF NOT EXISTS games (
 );
 CREATE INDEX IF NOT EXISTS idx_games_week ON games(season, week);
 
--- What the betting public looked like at each refresh. The board on the page is
--- recomputed live, so nothing reads this back yet; it exists because a forward
--- record of a contrarian rule is only honest if it is graded against splits
--- actually observed before kickoff rather than reconstructed afterwards.
+-- What the betting public looked like at each refresh. The fade record is
+-- graded straight off this table: for each finished game the last snapshot at
+-- or before kickoff decides whether the bet was on, which is what makes the
+-- record honest -- it can only ever use what was observable before the game,
+-- and a game that fell below the threshold during the week simply is not in
+-- its own gameday snapshot.
 CREATE TABLE IF NOT EXISTS betting_splits (
     fetched_at  TEXT NOT NULL,
     kickoff_utc TEXT,
@@ -143,10 +145,27 @@ CREATE TABLE IF NOT EXISTS betting_splits (
     tickets_pct INTEGER NOT NULL,
     money_pct   INTEGER,
     num_bets    INTEGER,
+    -- 1 for rows backfilled from a completed week, whose percentages are the
+    -- final tally rather than a pre-kickoff reading. Graded the same way, but
+    -- the page says how many of the record came in on that basis.
+    is_final    INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (fetched_at, away, home, market, side)
 );
 CREATE INDEX IF NOT EXISTS idx_splits_game
     ON betting_splits(away, home, kickoff_utc, fetched_at DESC);
+
+-- Final scores, so a bet taken from the splits above can be graded. Written
+-- whenever the splits payload shows a game complete; the same feed carries the
+-- boxscore, so this needs no second source.
+CREATE TABLE IF NOT EXISTS game_results (
+    away         TEXT NOT NULL,
+    home         TEXT NOT NULL,
+    kickoff_utc  TEXT NOT NULL,
+    away_points  INTEGER NOT NULL,
+    home_points  INTEGER NOT NULL,
+    recorded_at  TEXT NOT NULL,
+    PRIMARY KEY (away, home, kickoff_utc)
+);
 
 -- Projections, one row per (source, player, week, as_of). Component stats are
 -- kept as JSON so the league's own scoring settings can be reapplied later.
@@ -240,6 +259,7 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
 # rather than building one, so these have to be applied explicitly.
 _ADDED_COLUMNS: dict[str, dict[str, str]] = {
     "games": {"period": "INTEGER", "clock": "REAL"},
+    "betting_splits": {"is_final": "INTEGER NOT NULL DEFAULT 0"},
 }
 
 

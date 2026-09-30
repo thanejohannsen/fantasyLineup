@@ -351,12 +351,38 @@ qualifying -- or has kicked off -- simply stops appearing. There is no stale row
 to remove and nothing to go out of sync, the same way roster availability is
 derived everywhere else here.
 
-**It is a log, not a claim of edge.** Three weeks of backtest put the spread arm
-at 6-2, a confidence interval running from 45% to 105%, which is consistent with
-anything at all. It exists so a forward record can accumulate against a rule
-fixed in advance, which is the only way the question gets answered. Every
-snapshot is appended to `betting_splits` at fetch time, so that record grades
-against what was observable *before* kickoff rather than reconstructed after.
+### The record
+
+A tally sits above the board: **16-4** at the time of writing, over 2026 weeks
+1-3. It is **derived, never accumulated**. Every refresh appends what it saw to
+`betting_splits` with a timestamp, so for any finished game the question "was
+this bet on?" has one answer that can be recomputed from scratch -- and is, on
+every run. Nothing is locked, the board and the record cannot disagree about
+what qualified (both call the same `find_fades`), and raising the threshold
+re-grades every past week for free.
+
+The deciding reading is **the last snapshot at or before kickoff**. That is what
+makes "it fell off the board during the week" enforce itself with no
+bookkeeping: a game carrying 85% of tickets on Tuesday that has drifted to 70%
+by Sunday is not lopsided in its own gameday snapshot, so it never enters the
+record. A reading taken after kickoff is never used -- by then the tickets
+include people betting the live game.
+
+The scheduled refresh is not reliable, so the nearest reading can be stale. Past
+four hours from kickoff it is not evidence about gameday at all, and the bet is
+dropped rather than graded on a guess. A smaller honest record beats a larger
+invented one.
+
+Weeks 1-3 were backfilled with `fl fades-backfill`, and those rows are graded
+from each game's **closing** ticket count -- a finished week is all the feed
+still serves. Live rows use a genuine pre-kickoff reading. The page says which
+is which once the record holds both.
+
+**It is a log, not a claim of edge.** Sixteen and four is twenty bets; the 95%
+interval on it runs roughly 54% to 88% against a 52.4% break-even, so the lower
+bound clears the hurdle only barely. Worse, the rule was found on the very weeks
+it is scored against, which is the ordinary way a number like this appears and
+then evaporates. The forward record is the only thing that will settle it.
 
 One oddity worth knowing: this feed reports the **under** ahead on tickets in 52
 of 64 sampled games, which inverts the best-documented bias in betting. That
@@ -385,7 +411,7 @@ next such check costs one glance.
 ## Development
 
 ```bash
-.venv/bin/python -m pytest        # 177 tests, no network required
+.venv/bin/python -m pytest        # 195 tests, no network required
 ```
 
 Tests run against captured real API responses in `fixtures/`, so they fail if an

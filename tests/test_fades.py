@@ -50,7 +50,7 @@ def test_a_lopsided_spread_puts_the_other_side_on_the_board():
     assert fade.public.side == "home" and fade.public.tickets == 88
     assert fade.bet.side == "away", "we take the unpopular side"
     assert fade.bet.line == 3.5, "and its own line, not the negation of theirs"
-    assert fade.line_label == "away +3.5"
+    assert fade.line_label == "AAA +3.5", "named by team, not by which end of the fixture"
 
 
 def test_a_lopsided_total_is_labelled_so_the_direction_can_be_checked():

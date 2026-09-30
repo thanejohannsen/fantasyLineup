@@ -90,6 +90,10 @@ class GameSplits:
     status: str
     num_bets: int
     sides: dict[tuple[str, str], Side] = field(default_factory=dict)
+    # Final score, once there is one. The same payload carries the boxscore, so
+    # grading a fade needs no second source.
+    away_points: int | None = None
+    home_points: int | None = None
 
     @property
     def label(self) -> str:
@@ -98,6 +102,10 @@ class GameSplits:
     @property
     def started(self) -> bool:
         return self.status not in ("scheduled", "pre", "")
+
+    @property
+    def final(self) -> bool:
+        return self.away_points is not None and self.home_points is not None
 
     def opposite(self, side: Side) -> Side | None:
         return self.sides.get((side.market, OPPOSITE.get(side.side, "")))
@@ -149,6 +157,7 @@ def parse_games(payload: dict) -> list[GameSplits]:
                         money=(info.get("money") or {}).get("percent"),
                     )
 
+        box = game.get("boxscore") or {}
         out.append(
             GameSplits(
                 away=away,
@@ -157,18 +166,35 @@ def parse_games(payload: dict) -> list[GameSplits]:
                 status=str(game.get("status") or ""),
                 num_bets=int(game.get("num_bets") or 0),
                 sides=sides,
+                away_points=box.get("total_away_points"),
+                home_points=box.get("total_home_points"),
             )
         )
     return out
 
 
-def fetch_splits(timeout: float = 30.0) -> list[GameSplits]:
-    """Current ticket and money splits for every NFL game on the board.
+def fetch_splits(
+    timeout: float = 30.0, week: int | None = None, season: int | None = None
+) -> list[GameSplits]:
+    """Ticket and money splits for every NFL game on the board.
+
+    With no ``week`` this is the current slate. Naming a completed week returns
+    it with final scores attached, which is how the record gets backfilled --
+    though the percentages a finished week serves are the closing tally, not
+    what was showing before kickoff. ``store_splits(..., is_final=True)`` is
+    what keeps that distinction.
 
     Returns an empty list on any failure. A betting board that cannot be built
     should leave its tab empty, not take the lineup advice down with it.
     """
-    params = {"period": "game", "bookIds": ",".join(str(b) for b in BOOK_IDS)}
+    params: dict[str, str | int] = {
+        "period": "game",
+        "bookIds": ",".join(str(b) for b in BOOK_IDS),
+    }
+    if week is not None:
+        params["week"] = week
+    if season is not None:
+        params["season"] = season
     try:
         with httpx.Client(timeout=timeout, follow_redirects=True, headers=_HEADERS) as client:
             resp = client.get(SCOREBOARD_URL, params=params)
@@ -184,13 +210,23 @@ def fetch_splits(timeout: float = 30.0) -> list[GameSplits]:
 
 
 def store_splits(
-    conn, games: list[GameSplits], fetched_at: datetime | None = None
+    conn,
+    games: list[GameSplits],
+    fetched_at: datetime | None = None,
+    is_final: bool = False,
 ) -> int:
     """Append what this refresh saw, one row per quoted side.
 
     Append-only and keyed by fetch time, so the history is a record of what was
-    observable before kickoff. Grading a contrarian rule against splits pulled
-    after the fact would be scoring it on information it never had.
+    observable before kickoff. That is exactly what the fade record is graded
+    from, and grading against splits pulled after the fact would be scoring the
+    rule on information it never had.
+
+    ``is_final`` marks the exception: rows backfilled from a completed week,
+    whose percentages are the closing tally because that is all the feed still
+    serves for a finished game. They are stamped with the kickoff they belong to
+    so the ordinary grading path picks them up, and flagged so the page can say
+    how much of the record rests on them.
     """
     stamp = (fetched_at or datetime.now(UTC)).isoformat(timespec="seconds")
     rows = [
@@ -206,6 +242,7 @@ def store_splits(
             s.tickets,
             s.money,
             g.num_bets,
+            int(is_final),
         )
         for g in games
         for s in g.sides.values()
@@ -213,8 +250,30 @@ def store_splits(
     conn.executemany(
         """INSERT OR REPLACE INTO betting_splits
                (fetched_at, kickoff_utc, away, home, market, side,
-                line, odds, tickets_pct, money_pct, num_bets)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                line, odds, tickets_pct, money_pct, num_bets, is_final)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        rows,
+    )
+    conn.commit()
+    return len(rows)
+
+
+def store_results(conn, games: list[GameSplits], recorded_at: datetime | None = None) -> int:
+    """Record the final score of every game that has one.
+
+    Without a kickoff there is nothing to match a snapshot against, so those are
+    skipped rather than stored under a null key.
+    """
+    stamp = (recorded_at or datetime.now(UTC)).isoformat(timespec="seconds")
+    rows = [
+        (g.away, g.home, g.kickoff_utc.isoformat(), g.away_points, g.home_points, stamp)
+        for g in games
+        if g.final and g.kickoff_utc is not None
+    ]
+    conn.executemany(
+        """INSERT OR REPLACE INTO game_results
+               (away, home, kickoff_utc, away_points, home_points, recorded_at)
+           VALUES (?, ?, ?, ?, ?, ?)""",
         rows,
     )
     conn.commit()

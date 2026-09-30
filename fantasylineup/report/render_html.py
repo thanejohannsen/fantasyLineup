@@ -100,6 +100,18 @@ td.slot, th.slot { width: 3.4rem; }
 .fade td:last-child, .fade th:last-child { padding-right: 0; }
 .fade td.pub { white-space: normal; }
 .fade .detail { display: block; font-size: .8rem; color: var(--muted); }
+/* The record reads before the board does: it is the reason to trust or ignore
+   everything under it. */
+.record { display: flex; align-items: baseline; gap: .6rem; margin: 0 0 .2rem; }
+.record .tally {
+  font-size: 1.9rem; font-weight: 650; letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+}
+.record .sub { color: var(--muted); font-size: .85rem; margin: 0; }
+.logh {
+  font-size: .78rem; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--muted); margin: 1.6rem 0 .4rem;
+}
 /* On a phone the recommended lineup is what you act on, and eight columns push
    it off screen entirely. The current side keeps its name -- so a swap stays
    legible -- and drops its numbers, which duplicate the other side on every row
@@ -560,6 +572,7 @@ def render_dashboard(
     default_roster_id: int | None = None,
     fades=None,
     fade_threshold: int = 80,
+    settled=None,
 ) -> str:
     """The whole page: one section per team, one of them visible.
 
@@ -573,7 +586,7 @@ def render_dashboard(
         default_roster_id = teams[0].roster_id
 
     generated = teams[0].advisory.generated_at.strftime("%a %d %b %Y, %H:%M UTC")
-    fades_panel = render_fades_panel(fades or [], fade_threshold)
+    fades_panel = render_fades_panel(fades or [], fade_threshold, settled)
     # Only the default team is visible on load. The script may switch to a
     # remembered choice, but the page is already correct without it.
     sections = "".join(
@@ -618,7 +631,95 @@ def render_dashboard(
 """
 
 
-def render_fades_panel(fades, threshold: int = 80) -> str:
+def _record_strip(settled) -> str:
+    """How the rule has actually done, above the board rather than below it.
+
+    One merged number. Some of it was graded from closing ticket counts rather
+    than a pre-kickoff reading, because a finished week is all the feed still
+    serves -- said plainly underneath instead of split into a second total,
+    since the figure to act on is the whole record.
+    """
+    if not settled:
+        return (
+            '<p class="note">No bet has settled yet. The record starts once a '
+            "game that qualified near kickoff has finished.</p>"
+        )
+
+    from ..engine.record import tally
+
+    r = tally(settled)
+    bits = []
+    if r.win_rate is not None:
+        bits.append(f"{r.win_rate:.0%}")
+    bits.append(f"{r.units:+.1f}u at -110")
+    sub = " &middot; ".join(bits)
+
+    n = len(settled)
+    if r.from_final_tally == n:
+        basis = (
+            f"All {n} were graded from the closing ticket count rather than a "
+            "pre-kickoff reading, which is all the feed still serves for a "
+            "finished week"
+        )
+    elif r.from_final_tally:
+        basis = (
+            f"{r.from_final_tally} of {n} were graded from the closing ticket "
+            "count rather than a pre-kickoff reading, and are marked below"
+        )
+    else:
+        basis = f"{n} settled bets"
+
+    return (
+        f'<div class="record"><span class="tally">{r.label}</span>'
+        f'<span class="sub">{sub}</span></div>'
+        f'<p class="note">{_esc(basis)}. A bet is decided by the last snapshot '
+        f"within 4 hours of kickoff, so a game that fell off the board during "
+        f"the week is never counted.</p>"
+    )
+
+
+def _settled_table(settled) -> str:
+    """Every graded bet, newest first -- the log the record is computed from."""
+    if not settled:
+        return ""
+
+    # Marking the basis per row only says something once the record holds both
+    # kinds. While every row is a closing count the strip above has already said
+    # so, and repeating it twenty times is noise on a phone.
+    finals = sum(s.from_final_tally for s in settled)
+    mixed = 0 < finals < len(settled)
+
+    rows = []
+    for s in reversed(settled):
+        cls = {"win": "good", "loss": "conflict"}.get(s.result, "slot")
+        when = f"{s.fade.kickoff_utc:%b %-d}" if s.fade.kickoff_utc else ""
+        flag = (
+            '<span class="detail">closing count</span>'
+            if mixed and s.from_final_tally
+            else ""
+        )
+        # Result sits under the score rather than in a column of its own: at
+        # 360px the fourth column pushed the table past its pane, and "34-31"
+        # with "win" beneath it is how the rest of this board already reads.
+        rows.append(
+            f"<tr><td>{_esc(s.game)}"
+            f'<span class="detail">{_esc(when)}</span></td>'
+            f"<td>{_esc(s.fade.line_label)}"
+            f'<span class="detail">public {_esc(s.fade.public.side)} '
+            f"{s.fade.public.tickets}%</span>{flag}</td>"
+            f'<td class="num">{_esc(s.score)}'
+            f'<span class="detail {cls}">{s.result}</span></td></tr>'
+        )
+
+    return (
+        f'<h3 class="logh">Settled</h3>'
+        f'<div class="scroll"><table class="lineup fade">'
+        f"<tr><th>Game</th><th>Bet</th><th>Score</th></tr>"
+        f'{"".join(rows)}</table></div>'
+    )
+
+
+def render_fades_panel(fades, threshold: int = 80, settled=None) -> str:
     """Games where the tickets are lopsided enough for the rule to fire.
 
     Both sides are shown with their ticket shares, and the bet is spelled out
@@ -628,13 +729,17 @@ def render_fades_panel(fades, threshold: int = 80) -> str:
     Printing "under 93% / over 7% -> bet OVER" is what made that a glance rather
     than a project, so it stays: the next such question costs one look.
     """
+    settled = list(settled or [])
+    strip = _record_strip(settled)
+    log = _settled_table(settled)
+
     if not fades:
         return (
-            f'<div class="panel"><h2>Fade the public</h2>'
+            f'<div class="panel"><h2>Fade the public</h2>{strip}'
             f'<p>No spread or total is currently carrying {threshold}% or more of '
             f"the tickets on one side.</p>"
             f'<p class="note">The board fills as kickoff approaches, so this is '
-            f"usually empty early in the week.</p></div>"
+            f"usually empty early in the week.</p>{log}</div>"
         )
 
     rows = []
@@ -650,26 +755,17 @@ def render_fades_panel(fades, threshold: int = 80) -> str:
             if f.kickoff_utc
             else ""
         )
-        # The money share and the reading of it are one fact, so they share a
-        # cell. As separate columns they pushed the bet off a phone screen --
-        # and the bet is the only thing on this board to act on. The market
-        # column went the same way: "over 47.5" already says it is a total.
-        #
-        # A divergence at or above zero means the handle agrees with the crowd,
-        # so fading it fades the money too -- worth flagging, not hiding.
-        div = f.divergence
-        if div is None:
-            detail = ""
-        else:
-            gloss = (
-                '<span class="conflict">money agrees</span>'
-                if div >= 0
-                else f'<span class="good">money lags {div}</span>'
-            )
-            detail = (
-                f'<span class="detail">{f.public.money}% of money</span>'
-                f'<span class="detail">{gloss}</span>'
-            )
+        # The money share is reported and left to the reader. It used to carry a
+        # verdict beside it -- "money agrees" / "money lags N" -- which said
+        # less than the number did and split its colour at exactly zero, so an
+        # 82-against-83 noise gap was rendered in the green reserved for a real
+        # divergence. The market column went too: "over 47.5" already says it
+        # is a total, and on a phone those columns pushed the bet off screen.
+        detail = (
+            f'<span class="detail">{f.public.money}% of money</span>'
+            if f.public.money is not None
+            else ""
+        )
         odds = f'<span class="detail">{f.bet.odds:+d}</span>' if f.bet.odds else ""
         rows.append(
             f"<tr><td>{_esc(f.game)}{when}</td>"
@@ -678,7 +774,7 @@ def render_fades_panel(fades, threshold: int = 80) -> str:
         )
 
     return (
-        f'<div class="panel"><h2>Fade the public</h2>'
+        f'<div class="panel"><h2>Fade the public</h2>{strip}'
         f'<div class="scroll"><table class="lineup fade">'
         f"<tr><th>Game</th><th>Public is on</th><th>Bet</th></tr>"
         f'{"".join(rows)}</table></div>'
@@ -687,17 +783,17 @@ def render_fades_panel(fades, threshold: int = 80) -> str:
         f"reach this threshold almost automatically, because everyone takes the big "
         f"favourite for a small payout.</p>"
         f'<p class="note">Recomputed every refresh, so anything that stops '
-        f"qualifying disappears on its own. <b>This is a log, not advice.</b> Three "
-        f"weeks of backtest put the spread arm at 6-2, an interval consistent with "
-        f"anything at all; it is here so a record can build against a rule fixed in "
-        f"advance.</p>"
+        f"qualifying disappears on its own. <b>This is a log, not advice.</b> The "
+        f"record below is a thin sample, and the rule was found on the same weeks "
+        f"it is scored against -- the ordinary way a number like it appears and "
+        f"then evaporates.</p>"
         f'<p class="note">The under leads tickets in most games here -- 52 of 64 '
         f"sampled -- which inverts the usual public bias, so the direction was "
         f"checked rather than trusted. It holds: on 30 Sep two live totals pointing "
         f"opposite ways each matched an independent public board exactly, money "
         f"share included. Why the crowd sits on unders is unexplained, but the "
         f"labels are not the reason. Both sides are printed so the next check stays "
-        f"a glance.</p></div>"
+        f"a glance.</p>{log}</div>"
     )
 
 

@@ -51,6 +51,13 @@ class Fade:
     public: Side
     bet: Side
     num_bets: int
+    # Carried so a spread can be written as "MIA +9.5" rather than "home +9.5".
+    # The bet has to name the team you are backing: a reader who has to map
+    # home onto a team from the fixture beside it is a reader who can get it
+    # the wrong way round, which is the whole failure this board exists to
+    # avoid on the over/under side.
+    away: str = ""
+    home: str = ""
 
     @property
     def divergence(self) -> int | None:
@@ -65,13 +72,21 @@ class Fade:
         return self.public.money - self.public.tickets
 
     @property
+    def bet_name(self) -> str:
+        """Who you are backing: a team for a spread, over/under for a total."""
+        if self.market == "total":
+            return self.bet.side
+        team = {"away": self.away, "home": self.home}.get(self.bet.side, "")
+        return team or self.bet.side
+
+    @property
     def line_label(self) -> str:
         """The bet as it would be written on a ticket."""
         if self.bet.line is None:
-            return self.bet.side
+            return self.bet_name
         if self.market == "total":
-            return f"{self.bet.side} {self.bet.line:g}"
-        return f"{self.bet.side} {self.bet.line:+g}"
+            return f"{self.bet_name} {self.bet.line:g}"
+        return f"{self.bet_name} {self.bet.line:+g}"
 
 
 def find_fades(
@@ -113,6 +128,8 @@ def find_fades(
                     public=public,
                     bet=bet,
                     num_bets=game.num_bets,
+                    away=game.away,
+                    home=game.home,
                 )
             )
 

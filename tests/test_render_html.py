@@ -426,11 +426,20 @@ def test_the_board_states_the_bet_rather_than_leaving_it_implied():
     and a reader doing the flip is a reader who can get it backwards."""
     from fantasylineup.report.render_html import render_fades_panel
 
-    # 90% of the money behind 85% of the tickets: the handle is on the crowd's
-    # side too, so fading it fades everyone. Disclosed, not hidden.
     panel = render_fades_panel([_fade(side="over", tickets=85, money=90, line=38.5)])
     assert "under 38.5" in panel, "the bet, not the popular side"
-    assert "money agrees" in panel
+
+
+def test_the_money_share_is_reported_without_a_verdict():
+    """The gloss beside it said less than the number and split its colour at
+    exactly zero, so an 82-against-83 noise gap was drawn in the green kept for
+    a real divergence. The percentage stays; the reading of it is the reader's.
+    """
+    from fantasylineup.report.render_html import render_fades_panel
+
+    panel = render_fades_panel([_fade(side="over", tickets=85, money=90, line=38.5)])
+    assert "90% of money" in panel
+    assert "money agrees" not in panel and "money lags" not in panel
 
 
 def test_the_bet_is_not_pushed_off_a_phone_by_extra_columns():
@@ -445,3 +454,55 @@ def test_the_bet_is_not_pushed_off_a_phone_by_extra_columns():
     assert panel.count("<th") == 3, "three columns, so the bet stays on screen"
     assert ">total<" not in panel, "the market column, redundant with the bet label"
     assert "data-kickoff" in panel, "kickoff kept, as a sub-line under the game"
+
+
+# ------------------------------------------------------- the fade record
+
+
+def _settled(result="win", from_final_tally=True, tickets=88):
+    from fantasylineup.engine.record import Settled
+
+    return Settled(
+        fade=_fade(side="under", tickets=tickets, money=90, line=47.5),
+        observed_at=KICKOFF - timedelta(minutes=30),
+        from_final_tally=from_final_tally,
+        result=result,
+        away_points=31,
+        home_points=33,
+    )
+
+
+def test_the_record_leads_the_panel_with_its_own_number():
+    """It is the reason to trust or ignore everything under it, so it reads
+    before the board rather than after."""
+    from fantasylineup.report.render_html import render_fades_panel
+
+    panel = render_fades_panel(
+        [_fade()], settled=[_settled(), _settled(), _settled("loss")]
+    )
+    assert "2-1" in panel
+    assert panel.index("2-1") < panel.index("Public is on"), "above the board"
+    assert "31-33" in panel, "the settled log carries the score"
+
+
+def test_a_push_is_logged_but_kept_out_of_the_win_rate():
+    from fantasylineup.report.render_html import render_fades_panel
+
+    panel = render_fades_panel([], settled=[_settled("win"), _settled("push")])
+    assert "1-0-1" in panel, "pushes are shown, and shown as distinct"
+    assert "100%" in panel, "one win from one decision, the push not counted"
+
+
+def test_the_closing_count_flag_appears_only_once_the_record_is_mixed():
+    """While every row shares a basis the strip above has already said so, and
+    repeating it on each row is noise -- but the moment the two are mixed the
+    distinction is the only way to read the number honestly."""
+    from fantasylineup.report.render_html import render_fades_panel
+
+    all_final = render_fades_panel([], settled=[_settled(), _settled()])
+    assert "closing count" not in all_final
+
+    mixed = render_fades_panel(
+        [], settled=[_settled(), _settled(from_final_tally=False)]
+    )
+    assert "closing count" in mixed
