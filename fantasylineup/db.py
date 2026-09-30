@@ -127,8 +127,17 @@ CREATE TABLE IF NOT EXISTS games (
 );
 CREATE INDEX IF NOT EXISTS idx_games_week ON games(season, week);
 
--- What the betting public looked like at each refresh. The fade record is
--- graded straight off this table: for each finished game the last snapshot at
+-- What the betting public looked like at each refresh.
+--
+-- The one table here that is NOT rebuildable from the APIs. Everything else is
+-- a cache; a *pre-kickoff* ticket count is not, because once a game is over the
+-- feed serves only its closing tally -- which is why backfilled rows carry
+-- is_final. `data/` is gitignored and the scheduled job restores it from an
+-- Actions cache that gets evicted, so the rows that decided a settled bet are
+-- mirrored into `records/fade_log.json`, which is committed. That copy is the
+-- one that lasts; see engine/record.py.
+--
+-- The fade record is graded straight off this table: for each finished game the last snapshot at
 -- or before kickoff decides whether the bet was on, which is what makes the
 -- record honest -- it can only ever use what was observable before the game,
 -- and a game that fell below the threshold during the week simply is not in

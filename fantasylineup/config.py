@@ -27,9 +27,15 @@ class PathsConfig:
     cache: Path
     reports: Path
     site: Path
+    # Tracked, unlike `db`. Pre-kickoff betting splits are the one thing here
+    # that cannot be refetched -- a finished game serves only its closing tally
+    # -- so the settled history is mirrored to the repository, where a cache
+    # eviction cannot reach it.
+    fade_log: Path
 
     def ensure(self) -> None:
         self.db.parent.mkdir(parents=True, exist_ok=True)
+        self.fade_log.parent.mkdir(parents=True, exist_ok=True)
         for d in (self.cache, self.reports, self.site):
             d.mkdir(parents=True, exist_ok=True)
 
@@ -134,6 +140,7 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         cache=root / p["cache"],
         reports=root / p["reports"],
         site=root / p["site"],
+        fade_log=root / p.get("fade_log", "records/fade_log.json"),
     )
     return Config(
         league=LeagueConfig(**raw["league"]),

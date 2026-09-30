@@ -39,7 +39,7 @@ from .report.render_html import TeamView, render_dashboard, render_moves_panel
 from .report.recap import build_recap, sync_actuals
 from .report.render_text import render_advisory, render_moves, render_recap
 from .engine.fades import find_fades
-from .engine.record import settle, tally
+from .engine.record import load_log, save_log, settle, tally
 from .sources.kickoffs import sync_kickoffs
 from .sources.splits import fetch_splits, store_results, store_splits
 from .sources.sleeper import SleeperClient
@@ -452,6 +452,11 @@ def cmd_refresh(args: argparse.Namespace) -> int:
                     now=now,
                     markets=tuple(cfg.fades.markets),
                 )
+            # The committed archive first: `data/` is gitignored and restored
+            # from a cache that gets evicted, so without this a scheduled run
+            # grades an empty history and the record silently vanishes -- which
+            # is exactly what it did.
+            load_log(conn, cfg.paths.fade_log)
             # Graded off the stored snapshots rather than anything held in
             # memory, so the record survives a run that fetched nothing.
             settled = settle(
@@ -459,6 +464,7 @@ def cmd_refresh(args: argparse.Namespace) -> int:
                 threshold=cfg.fades.threshold,
                 markets=tuple(cfg.fades.markets),
             )
+            save_log(conn, cfg.paths.fade_log)
 
         # Season totals for every rostered player, keyed by id so a renderer
         # can look one up without re-deriving the blend.
@@ -565,9 +571,11 @@ def cmd_fades_backfill(args: argparse.Namespace) -> int:
             store_results(conn, final)
             print(f"week {week}: {len(final)} completed games")
 
+        load_log(conn, cfg.paths.fade_log)
         settled = settle(
             conn, threshold=cfg.fades.threshold, markets=tuple(cfg.fades.markets)
         )
+        save_log(conn, cfg.paths.fade_log)
 
     record = tally(settled)
     print(f"Fade record: {record.label} over {len(settled)} settled bets")

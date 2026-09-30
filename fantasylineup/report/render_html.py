@@ -107,7 +107,12 @@ td.slot, th.slot { width: 3.4rem; }
   font-size: 1.9rem; font-weight: 650; letter-spacing: -.02em;
   font-variant-numeric: tabular-nums;
 }
-.record .sub { color: var(--muted); font-size: .85rem; margin: 0; }
+/* Not `.sub`: the publish step decides whether a run is worth committing by
+   counting changed lines that do NOT carry class="sub", taking that to mean the
+   timestamp. The whole fades tab renders on one line, so reusing the class here
+   made every change on this tab invisible to that check -- a record going 16-4
+   to 17-4 would have been reverted, never published. */
+.record .recsub { color: var(--muted); font-size: .85rem; margin: 0; }
 .logh {
   font-size: .78rem; text-transform: uppercase; letter-spacing: .08em;
   color: var(--muted); margin: 1.6rem 0 .4rem;
@@ -671,7 +676,7 @@ def _record_strip(settled) -> str:
 
     return (
         f'<div class="record"><span class="tally">{r.label}</span>'
-        f'<span class="sub">{sub}</span></div>'
+        f'<span class="recsub">{sub}</span></div>'
         f'<p class="note">{_esc(basis)}. A bet is decided by the last snapshot '
         f"within 4 hours of kickoff, so a game that fell off the board during "
         f"the week is never counted.</p>"

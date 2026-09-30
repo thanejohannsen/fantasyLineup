@@ -506,3 +506,17 @@ def test_the_closing_count_flag_appears_only_once_the_record_is_mixed():
         [], settled=[_settled(), _settled(from_final_tally=False)]
     )
     assert "closing count" in mixed
+
+
+def test_the_fades_tab_carries_no_class_the_publish_step_ignores():
+    """The workflow decides a run is worth committing by counting changed lines
+    that do NOT carry class="sub", taking that to mean the timestamp moved.
+
+    The whole fades tab renders on one line, so a class="sub" anywhere in it
+    made every change on that tab invisible to the check -- the record going
+    16-4 to 17-4 would have been reverted and never published.
+    """
+    from fantasylineup.report.render_html import render_fades_panel
+
+    panel = render_fades_panel([_fade()], settled=[_settled()])
+    assert 'class="sub"' not in panel

@@ -83,12 +83,21 @@ jobs:
       # Commit only when the page actually changed. Every run rewrites the
       # "Updated ..." timestamp, so committing unconditionally would produce
       # a commit an hour forever and bury real changes in noise.
+      # `records/` carries the settled fade history. It is committed because
+      # `data/` is a cache and pre-kickoff betting splits cannot be refetched
+      # once a game has finished -- losing the cache would otherwise take the
+      # record with it.
       - name: Publish if changed
         run: |
           git config user.name "fantasylineup-bot"
           git config user.email "noreply@github.com"
+          if ! git diff --quiet -- records/; then
+            git add records/
+            git commit -m "Record settled fade bets"
+          fi
           if git diff --quiet -- docs/; then
             echo "No change to the dashboard; nothing to commit."
+            git push
             exit 0
           fi
           # Ignore a diff that is only the timestamp line.
@@ -97,6 +106,7 @@ jobs:
           if [ "$changed" -eq 0 ]; then
             echo "Only the timestamp moved; skipping commit."
             git checkout -- docs/
+            git push
             exit 0
           fi
           git add docs/

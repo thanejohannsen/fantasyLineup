@@ -231,3 +231,111 @@ def test_no_moneyline_reaches_the_record(week3):
     """Week 3 had moneylines at 98% on two games. They are excluded from the
     board by design, and the record must not quietly readmit them."""
     assert all(s.fade.market != "moneyline" for s in settle(week3))
+
+
+# ------------------------------------------------- surviving a lost cache
+
+
+def test_a_cold_database_grades_the_same_record_from_the_log(week3, tmp_path):
+    """The bug this file exists to prevent.
+
+    The record lived only in `data/`, which is gitignored and restored from a
+    cache. A scheduled run regenerated the page from a database that had never
+    seen the backfill, found nothing settled, and published an empty record --
+    correctly, because the data was not there. The archive is the copy that
+    survives, so a database with nothing in it must grade identically.
+    """
+    from fantasylineup.engine.record import load_log, save_log
+
+    path = tmp_path / "fade_log.json"
+    save_log(week3, path)
+    before = settle(week3)
+
+    cold = sqlite3.connect(":memory:")
+    init_db(cold)
+    assert settle(cold) == [], "the failure mode: nothing to grade"
+
+    load_log(cold, path)
+    after = settle(cold)
+    assert [(s.game, s.fade.line_label, s.result) for s in after] == [
+        (s.game, s.fade.line_label, s.result) for s in before
+    ]
+    assert tally(after).label == tally(before).label == "3-1"
+
+
+def test_the_log_carries_which_rows_were_closing_counts(week3, tmp_path):
+    """Lose this and the page starts claiming a pre-kickoff reading it never
+    had -- the one thing the record must not overstate."""
+    from fantasylineup.engine.record import load_log, save_log
+
+    path = tmp_path / "fade_log.json"
+    save_log(week3, path)
+
+    cold = sqlite3.connect(":memory:")
+    init_db(cold)
+    load_log(cold, path)
+    assert tally(settle(cold)).from_final_tally == 4
+
+
+def test_loading_twice_changes_nothing(week3, tmp_path):
+    from fantasylineup.engine.record import load_log, save_log
+
+    path = tmp_path / "fade_log.json"
+    save_log(week3, path)
+
+    cold = sqlite3.connect(":memory:")
+    init_db(cold)
+    load_log(cold, path)
+    once = settle(cold)
+    load_log(cold, path)
+    assert len(settle(cold)) == len(once)
+
+
+def test_the_log_is_still_re_gradeable_at_another_threshold(week3, tmp_path):
+    """Snapshots are archived rather than verdicts, so history is not frozen at
+    whatever threshold happened to be configured when it was written."""
+    from fantasylineup.engine.record import load_log, save_log
+
+    path = tmp_path / "fade_log.json"
+    save_log(week3, path)
+    cold = sqlite3.connect(":memory:")
+    init_db(cold)
+    load_log(cold, path)
+
+    assert len(settle(cold, threshold=80)) == 4
+    assert len(settle(cold, threshold=90)) < 4
+
+
+def test_a_kicked_off_game_is_archived_before_its_score_arrives(tmp_path):
+    """Waiting for the final would leave a window where a cache eviction
+    destroys a genuine pre-kickoff reading for good."""
+    from fantasylineup.engine.record import load_log, save_log
+
+    c = sqlite3.connect(":memory:")
+    init_db(c)
+    _snapshot(c, KICK - timedelta(minutes=30), home_tickets=90)
+
+    path = tmp_path / "fade_log.json"
+    assert save_log(c, path) == 1, "archived on kickoff, with no result yet"
+
+    cold = sqlite3.connect(":memory:")
+    init_db(cold)
+    load_log(cold, path)
+    assert settle(cold) == [], "nothing to grade until the score lands"
+
+    # The score arrives on a later run; the reading is still the archived one.
+    _result(cold, 20, 23)
+    (s,) = settle(cold)
+    assert s.observed_at == KICK - timedelta(minutes=30)
+    assert s.result == "win"
+
+
+def test_a_game_that_has_not_kicked_off_is_not_archived(tmp_path):
+    from fantasylineup.engine.record import save_log
+
+    c = sqlite3.connect(":memory:")
+    init_db(c)
+    future = datetime.now(UTC) + timedelta(days=2)
+    _snapshot(c, future - timedelta(hours=1), home_tickets=90, kickoff=future)
+
+    assert save_log(c, tmp_path / "fade_log.json") == 0

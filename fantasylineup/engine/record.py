@@ -30,7 +30,9 @@ graded on a guess: a smaller honest record beats a larger invented one.
 
 from __future__ import annotations
 
+import json
 import logging
+import pathlib
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -232,3 +234,137 @@ def tally(settled: list[Settled]) -> Record:
         pushes=sum(s.result == PUSH for s in settled),
         from_final_tally=sum(s.from_final_tally for s in settled),
     )
+
+
+# --------------------------------------------------------------- the archive
+#
+# Everything above derives the record from the database. That is the right
+# shape, but it put the record somewhere it could not survive: `data/` is
+# gitignored and the scheduled job restores it from a GitHub Actions cache,
+# which is evicted after a week without a hit.
+#
+# For the rest of the database that is fine -- it can all be refetched. A
+# *pre-kickoff* ticket count cannot. Once a game is over the feed serves only
+# the closing tally, which is exactly why backfilled rows are flagged. So the
+# deciding snapshots are mirrored into the repository, and that copy is the one
+# that lasts.
+#
+# Snapshots are archived, not verdicts. Which reading decides depends only on
+# time, never on the threshold, so freezing it keeps the record re-gradeable:
+# raise the threshold and every past week re-grades from the archive alone.
+
+LOG_VERSION = 1
+
+
+def _iso(value: datetime) -> str:
+    return value.isoformat()
+
+
+def save_log(conn, path) -> int:
+    """Mirror every kicked-off game's deciding snapshot into ``path``.
+
+    Written as soon as kickoff passes rather than when the score lands: waiting
+    for the final leaves a window in which a cache eviction would destroy a real
+    pre-kickoff reading for good. The score is filled in on a later run.
+    """
+    path = pathlib.Path(path)
+    games = conn.execute(
+        """SELECT DISTINCT away, home, kickoff_utc FROM betting_splits
+            WHERE kickoff_utc IS NOT NULL ORDER BY kickoff_utc, away"""
+    ).fetchall()
+
+    now = datetime.now(UTC)
+    entries = []
+    for away, home, kickoff_raw in games:
+        kickoff = datetime.fromisoformat(kickoff_raw)
+        if kickoff.tzinfo is None:
+            kickoff = kickoff.replace(tzinfo=UTC)
+        if kickoff > now:
+            continue
+
+        snapshot = _deciding_snapshot(conn, away, home, kickoff)
+        if snapshot is None:
+            continue
+        observed, is_final, rows = snapshot
+
+        score = conn.execute(
+            """SELECT away_points, home_points FROM game_results
+                WHERE away = ? AND home = ? AND kickoff_utc = ?""",
+            (away, home, kickoff.isoformat()),
+        ).fetchone()
+
+        entries.append(
+            {
+                "away": away,
+                "home": home,
+                "kickoff_utc": _iso(kickoff),
+                "observed_at": _iso(observed),
+                "is_final": int(is_final),
+                "away_points": score[0] if score else None,
+                "home_points": score[1] if score else None,
+                "sides": [
+                    {
+                        "market": market, "side": side, "line": line, "odds": odds,
+                        "tickets": tickets, "money": money, "num_bets": num_bets,
+                    }
+                    for market, side, line, odds, tickets, money, num_bets in rows
+                ],
+            }
+        )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"version": LOG_VERSION, "games": entries}, indent=1, sort_keys=True)
+        + "\n",
+        encoding="utf-8",
+    )
+    return len(entries)
+
+
+def load_log(conn, path) -> int:
+    """Read an archive back into the tables ``settle`` grades from.
+
+    Idempotent, and it never overwrites a row the database already holds: a live
+    pre-kickoff reading taken by this machine is better evidence than anything
+    replayed, so ``INSERT OR IGNORE`` leaves it alone.
+    """
+    path = pathlib.Path(path)
+    if not path.exists():
+        return 0
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("version") != LOG_VERSION:
+        log.warning("Ignoring fade log at version %r", payload.get("version"))
+        return 0
+
+    loaded = 0
+    for entry in payload.get("games") or []:
+        conn.executemany(
+            """INSERT OR IGNORE INTO betting_splits
+                   (fetched_at, kickoff_utc, away, home, market, side,
+                    line, odds, tickets_pct, money_pct, num_bets, is_final)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                (
+                    entry["observed_at"], entry["kickoff_utc"],
+                    entry["away"], entry["home"], s["market"], s["side"],
+                    s["line"], s["odds"], s["tickets"], s["money"],
+                    s.get("num_bets"), entry.get("is_final", 0),
+                )
+                for s in entry["sides"]
+            ],
+        )
+        if entry.get("away_points") is not None:
+            conn.execute(
+                """INSERT OR IGNORE INTO game_results
+                       (away, home, kickoff_utc, away_points, home_points, recorded_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    entry["away"], entry["home"], entry["kickoff_utc"],
+                    entry["away_points"], entry["home_points"], entry["observed_at"],
+                ),
+            )
+        loaded += 1
+
+    conn.commit()
+    return loaded

@@ -378,6 +378,34 @@ from each game's **closing** ticket count -- a finished week is all the feed
 still serves. Live rows use a genuine pre-kickoff reading. The page says which
 is which once the record holds both.
 
+#### Why the record is committed, and the database is not
+
+`data/` is gitignored and the scheduled job restores it from a GitHub Actions
+cache, on the standing principle that the database is a cache and everything in
+it can be refetched. `betting_splits` broke that principle: a **pre-kickoff**
+ticket count cannot be refetched, because once the game is over the feed serves
+only the closing tally. An evicted cache would have silently downgraded the
+season's record to closing tallies with nothing on the page to show it.
+
+So the reading that decided each settled bet is mirrored to
+**`records/fade_log.json`**, which is tracked. `fl refresh` loads it before
+grading and writes it back afterwards, and the workflow commits it. A fresh
+clone with no database reproduces the record exactly.
+
+It stores **snapshots, not verdicts**. Which reading decides depends only on
+time, never on the threshold, so freezing it keeps history re-gradeable: change
+the threshold and every past week re-grades from the archive alone. A game is
+archived as soon as its kickoff passes rather than when the score lands, so a
+cache eviction can cost at most one refresh interval of real pre-kickoff
+readings. Measured at six rows per game: about 30KB so far, ~170KB for a full
+season.
+
+This is the mistake that produced the first version of this feature. The
+backfill ran locally, `data/` never reached GitHub, and what shipped was a
+rendered page with 16-4 baked into the HTML. The next scheduled run regenerated
+that page from a database that had never seen the backfill and correctly
+published an empty record.
+
 **It is a log, not a claim of edge.** Sixteen and four is twenty bets; the 95%
 interval on it runs roughly 54% to 88% against a 52.4% break-even, so the lower
 bound clears the hurdle only barely. Worse, the rule was found on the very weeks

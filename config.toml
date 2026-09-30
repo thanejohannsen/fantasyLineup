@@ -11,6 +11,10 @@ db = "data/fantasylineup.db"
 cache = "data/cache"
 reports = "reports"
 site = "docs"
+# Tracked, unlike the database. `data/` is gitignored and the scheduled job
+# restores it from a cache that gets evicted; a pre-kickoff ticket count cannot
+# be refetched once the game is over, so the settled fade history lives here.
+fade_log = "records/fade_log.json"
 
 [sources]
 sleeper_base = "https://api.sleeper.app"
