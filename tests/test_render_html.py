@@ -378,3 +378,70 @@ def test_the_current_side_does_not_repeat_the_numbers():
     assert lineup.count(">275<") == 1, "the season figure appears once, not twice"
     # Four slots, one weekly figure each -- not one per side.
     assert lineup.count('class="num ">') == 4
+
+
+# ---------------------------------------------------------- the fade board
+
+
+def _fade(side="under", tickets=93, money=95, line=47.5):
+    """One qualifying total, with the opposing side carried alongside it."""
+    from fantasylineup.engine.fades import Fade
+    from fantasylineup.sources.splits import Side
+
+    other = "over" if side == "under" else "under"
+    return Fade(
+        game="IND @ WAS",
+        kickoff_utc=KICKOFF,
+        market="total",
+        public=Side("total", side, line, -120, tickets, money),
+        bet=Side("total", other, line, -102, 100 - tickets, None),
+        num_bets=5000,
+    )
+
+
+def test_a_fade_reaches_the_page_carrying_both_sides_and_the_bet():
+    """The board's only defence against a mislabelled feed is that it prints
+    what it saw, not merely what it concluded.
+
+    The feed shows unders ahead on tickets in most games, which inverts the
+    usual public bias; that was checked against independent boards and holds.
+    It held because the shares were on the page to check. Drop them and the
+    next transposition becomes invisible rather than obvious -- so the ticket
+    percentage, the side it sits on, and the resulting bet are each asserted.
+    """
+    html = render_dashboard(
+        "ZOO",
+        [TeamView(1, "Team 1", _advisory(_NOW), _moves_html(1))],
+        default_roster_id=1,
+        fades=[_fade()],
+    )
+
+    assert "IND @ WAS" in html
+    assert "93%" in html, "the public's ticket share"
+    assert "under" in html and "over 47.5" in html, "both sides, and the bet spelled out"
+
+
+def test_the_board_states_the_bet_rather_than_leaving_it_implied():
+    """"over 47.5" is actionable; "fade the under" makes the reader do the flip,
+    and a reader doing the flip is a reader who can get it backwards."""
+    from fantasylineup.report.render_html import render_fades_panel
+
+    # 90% of the money behind 85% of the tickets: the handle is on the crowd's
+    # side too, so fading it fades everyone. Disclosed, not hidden.
+    panel = render_fades_panel([_fade(side="over", tickets=85, money=90, line=38.5)])
+    assert "under 38.5" in panel, "the bet, not the popular side"
+    assert "money agrees" in panel
+
+
+def test_the_bet_is_not_pushed_off_a_phone_by_extra_columns():
+    """Six columns put the Bet cell -- the only thing on this board to act on --
+    off screen at 390px. The market column was dropped as redundant (the bet
+    label already says "over 47.5" is a total) and the money share folded in
+    beside the percentage it qualifies.
+    """
+    from fantasylineup.report.render_html import render_fades_panel
+
+    panel = render_fades_panel([_fade()])
+    assert panel.count("<th") == 3, "three columns, so the bet stays on screen"
+    assert ">total<" not in panel, "the market column, redundant with the bet label"
+    assert "data-kickoff" in panel, "kickoff kept, as a sub-line under the game"

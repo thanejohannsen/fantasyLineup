@@ -86,6 +86,20 @@ td.slot, th.slot { width: 3.4rem; }
    lines to avoid a scrollbar trades a small inconvenience for an unreadable
    column. */
 .scroll table { min-width: 40rem; }
+/* The fade board's cells are short -- a team pair, a percentage, a line -- so it
+   has no use for the lineup's width. Its own floor, plus the sub-lines that let
+   the money share and the price sit under what they qualify, keep the Bet column
+   on screen at 390px. It is the only cell on that board there is to act on, and
+   as six columns it was pushed off entirely. */
+.scroll table.fade { min-width: 17rem; }
+/* Tighter than the lineup's gutters: three columns of short strings do not need
+   the separation eight columns of names and numbers do, and at 390px those rems
+   were the difference between "under 38.5" and "under 3". */
+.fade td, .fade th { padding: .32rem .28rem; }
+.fade td:first-child, .fade th:first-child { padding-left: 0; }
+.fade td:last-child, .fade th:last-child { padding-right: 0; }
+.fade td.pub { white-space: normal; }
+.fade .detail { display: block; font-size: .8rem; color: var(--muted); }
 /* On a phone the recommended lineup is what you act on, and eight columns push
    it off screen entirely. The current side keeps its name -- so a swap stays
    legible -- and drops its numbers, which duplicate the other side on every row
@@ -128,6 +142,16 @@ td.slot, th.slot { width: 3.4rem; }
    and a stylesheet quirk that revealed them would be a mess rather than a
    glitch, so say it explicitly. */
 .team[hidden] { display: none; }
+.tab[hidden] { display: none; }
+.tabs { display: flex; gap: .3rem; margin: 0 0 1.1rem; border-bottom: 1px solid var(--line); }
+.tab-btn {
+  background: none; border: 0; border-bottom: 2px solid transparent;
+  color: var(--muted); font: inherit; font-size: .85rem; font-weight: 600;
+  padding: .45rem .7rem; cursor: pointer; margin-bottom: -1px;
+}
+.tab-btn:hover { color: var(--ink); }
+.tab-btn[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.good { color: var(--good); font-size: .78rem; }
 .teamsel { display: flex; align-items: center; gap: .5rem; margin: 0 0 1rem; }
 .teamsel label {
   color: var(--muted); font-size: .78rem; text-transform: uppercase;
@@ -207,6 +231,38 @@ _SCRIPT = """<script>
       show(picker.value);
       try { localStorage.setItem(KEY, picker.value); } catch (e) {}
       window.scrollTo(0, 0);
+    });
+  }
+
+  // Tabs. Both panes are already in the document, so this only toggles
+  // visibility -- the same approach the team selector uses.
+  var tabs = document.querySelectorAll(".tab-btn");
+  if (tabs.length) {
+    var TKEY = "fantasylineup.tab";
+    function showTab(name) {
+      var found = false;
+      document.querySelectorAll("section.tab").forEach(function (el) {
+        var mine = el.getAttribute("data-tab") === name;
+        el.hidden = !mine;
+        if (mine) found = true;
+      });
+      if (!found) return false;
+      tabs.forEach(function (b) {
+        b.setAttribute("aria-selected", b.getAttribute("data-tab") === name ? "true" : "false");
+      });
+      return true;
+    }
+    try {
+      var savedTab = localStorage.getItem(TKEY);
+      if (savedTab) showTab(savedTab);
+    } catch (e) {}
+    tabs.forEach(function (b) {
+      b.addEventListener("click", function () {
+        var name = b.getAttribute("data-tab");
+        if (!showTab(name)) return;
+        try { localStorage.setItem(TKEY, name); } catch (e) {}
+        window.scrollTo(0, 0);
+      });
     });
   }
 
@@ -499,7 +555,11 @@ def _team_selector(teams: list[TeamView], default_roster_id: int) -> str:
 
 
 def render_dashboard(
-    league_name: str, teams: list[TeamView], default_roster_id: int | None = None
+    league_name: str,
+    teams: list[TeamView],
+    default_roster_id: int | None = None,
+    fades=None,
+    fade_threshold: int = 80,
 ) -> str:
     """The whole page: one section per team, one of them visible.
 
@@ -513,6 +573,7 @@ def render_dashboard(
         default_roster_id = teams[0].roster_id
 
     generated = teams[0].advisory.generated_at.strftime("%a %d %b %Y, %H:%M UTC")
+    fades_panel = render_fades_panel(fades or [], fade_threshold)
     # Only the default team is visible on load. The script may switch to a
     # remembered choice, but the page is already correct without it.
     sections = "".join(
@@ -534,6 +595,12 @@ def render_dashboard(
 <div class="wrap">
   <h1>{_esc(league_name)}</h1>
   <div class="sub stamp">Updated {generated}</div>
+  <nav class="tabs">
+    <button class="tab-btn" data-tab="lineups" aria-selected="true">Lineups</button>
+    <button class="tab-btn" data-tab="fades" aria-selected="false">Fade the public</button>
+  </nav>
+  <section class="tab" data-tab="fades" hidden>{fades_panel}</section>
+  <section class="tab" data-tab="lineups">
   {_team_selector(teams, default_roster_id)}
   {sections}
   <div class="panel"><h2>How to read this</h2>
@@ -543,11 +610,95 @@ def render_dashboard(
     lineups; players are drawn independently, which understates the spread of a
     stacked lineup.</p>
   </div>
+  </section>
 </div>
 {_SCRIPT}
 </body>
 </html>
 """
+
+
+def render_fades_panel(fades, threshold: int = 80) -> str:
+    """Games where the tickets are lopsided enough for the rule to fire.
+
+    Both sides are shown with their ticket shares, and the bet is spelled out
+    rather than implied. That began as a hedge -- the feed reports the under
+    ahead on tickets in most games, which inverts the best-documented bias in
+    betting, so the labels looked transposed. They are not; see ``splits.py``.
+    Printing "under 93% / over 7% -> bet OVER" is what made that a glance rather
+    than a project, so it stays: the next such question costs one look.
+    """
+    if not fades:
+        return (
+            f'<div class="panel"><h2>Fade the public</h2>'
+            f'<p>No spread or total is currently carrying {threshold}% or more of '
+            f"the tickets on one side.</p>"
+            f'<p class="note">The board fills as kickoff approaches, so this is '
+            f"usually empty early in the week.</p></div>"
+        )
+
+    rows = []
+    for f in fades:
+        # Kickoff rides under the game rather than in a column of its own: it
+        # is a property of the game, and the header "Kickoff" was itself the
+        # widest thing in that column, pushing the bet off a phone screen.
+        # Absolute here, rewritten to a countdown by the script, so two
+        # consecutive refreshes still differ only in the timestamp line.
+        when = (
+            f'<span class="detail" data-kickoff="{f.kickoff_utc.isoformat()}">'
+            f"{_esc(f'{f.kickoff_utc:%a %H:%M}')}</span>"
+            if f.kickoff_utc
+            else ""
+        )
+        # The money share and the reading of it are one fact, so they share a
+        # cell. As separate columns they pushed the bet off a phone screen --
+        # and the bet is the only thing on this board to act on. The market
+        # column went the same way: "over 47.5" already says it is a total.
+        #
+        # A divergence at or above zero means the handle agrees with the crowd,
+        # so fading it fades the money too -- worth flagging, not hiding.
+        div = f.divergence
+        if div is None:
+            detail = ""
+        else:
+            gloss = (
+                '<span class="conflict">money agrees</span>'
+                if div >= 0
+                else f'<span class="good">money lags {div}</span>'
+            )
+            detail = (
+                f'<span class="detail">{f.public.money}% of money</span>'
+                f'<span class="detail">{gloss}</span>'
+            )
+        odds = f'<span class="detail">{f.bet.odds:+d}</span>' if f.bet.odds else ""
+        rows.append(
+            f"<tr><td>{_esc(f.game)}{when}</td>"
+            f'<td class="pub">{_esc(f.public.side)} <b>{f.public.tickets}%</b>{detail}</td>'
+            f"<td><b>{_esc(f.line_label)}</b>{odds}</td></tr>"
+        )
+
+    return (
+        f'<div class="panel"><h2>Fade the public</h2>'
+        f'<div class="scroll"><table class="lineup fade">'
+        f"<tr><th>Game</th><th>Public is on</th><th>Bet</th></tr>"
+        f'{"".join(rows)}</table></div>'
+        f'<p class="note">Spreads and totals only, at {threshold}% of '
+        f"<b>tickets</b> -- a headcount, not money. Moneylines are excluded: they "
+        f"reach this threshold almost automatically, because everyone takes the big "
+        f"favourite for a small payout.</p>"
+        f'<p class="note">Recomputed every refresh, so anything that stops '
+        f"qualifying disappears on its own. <b>This is a log, not advice.</b> Three "
+        f"weeks of backtest put the spread arm at 6-2, an interval consistent with "
+        f"anything at all; it is here so a record can build against a rule fixed in "
+        f"advance.</p>"
+        f'<p class="note">The under leads tickets in most games here -- 52 of 64 '
+        f"sampled -- which inverts the usual public bias, so the direction was "
+        f"checked rather than trusted. It holds: on 30 Sep two live totals pointing "
+        f"opposite ways each matched an independent public board exactly, money "
+        f"share included. Why the crowd sits on unders is unexplained, but the "
+        f"labels are not the reason. Both sides are printed so the next check stays "
+        f"a glance.</p></div>"
+    )
 
 
 def render_moves_panel(

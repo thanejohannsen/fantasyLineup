@@ -85,3 +85,14 @@ weekly_questionable = 0.80
 # model gave him before it could express "back in week 7".
 [health.returns]
 # "Josh Jacobs" = 7   # six-game suspension, back week 7
+
+[fades]
+# Share of *tickets* -- a headcount, not money -- that makes a side "the
+# public" and puts the other side on the board. Moneylines are deliberately not
+# listed: they reach any threshold almost automatically, because everyone takes
+# the big favourite for a small payout.
+#
+# The board is a log, not advice. Three weeks of backtest put the spread arm at
+# 6-2, an interval consistent with anything at all.
+threshold = 80
+markets = ["spread", "total"]

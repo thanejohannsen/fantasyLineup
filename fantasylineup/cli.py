@@ -38,7 +38,9 @@ from .report.advisory import build_advisory
 from .report.render_html import TeamView, render_dashboard, render_moves_panel
 from .report.recap import build_recap, sync_actuals
 from .report.render_text import render_advisory, render_moves, render_recap
+from .engine.fades import find_fades
 from .sources.kickoffs import sync_kickoffs
+from .sources.splits import fetch_splits, store_splits
 from .sources.sleeper import SleeperClient
 from .sync import (
     compute_availability,
@@ -432,6 +434,22 @@ def cmd_refresh(args: argparse.Namespace) -> int:
                 )
             return weekly[rid]
 
+        # The contrarian board. Recomputed from a live fetch every run, so a
+        # game that stops qualifying simply stops appearing; the snapshot is
+        # kept only so the rule can be graded later against what was actually
+        # visible before kickoff.
+        fades = []
+        if not args.no_splits:
+            split_games = fetch_splits()
+            if split_games:
+                store_splits(conn, split_games, now)
+                fades = find_fades(
+                    split_games,
+                    threshold=cfg.fades.threshold,
+                    now=now,
+                    markets=tuple(cfg.fades.markets),
+                )
+
         # Season totals for every rostered player, keyed by id so a renderer
         # can look one up without re-deriving the blend.
         season_points: dict[str, float] = {}
@@ -493,7 +511,11 @@ def cmd_refresh(args: argparse.Namespace) -> int:
     target = cfg.paths.site / "index.html"
     target.write_text(
         render_dashboard(
-            league.get("name", "Fantasy"), views, default_roster_id=cfg.league.roster_id
+            league.get("name", "Fantasy"),
+            views,
+            default_roster_id=cfg.league.roster_id,
+            fades=fades,
+            fade_threshold=cfg.fades.threshold,
         ),
         encoding="utf-8",
     )
@@ -503,6 +525,7 @@ def cmd_refresh(args: argparse.Namespace) -> int:
         f"Week {week} vs {mine.opponent_name if mine else 'unknown'}; "
         f"{len(views)} teams; moves refreshed: {want_moves}"
     )
+    print(f"Fade board: {len(fades)} qualifying at {cfg.fades.threshold}% of tickets")
     return 0
 
 
@@ -730,6 +753,9 @@ def main(argv: list[str] | None = None) -> int:
     p_refresh.add_argument("-w", "--week", type=int, default=None)
     p_refresh.add_argument("--with-moves", action="store_true", help="force the trade search")
     p_refresh.add_argument("--no-kalshi", action="store_true")
+    p_refresh.add_argument(
+        "--no-splits", action="store_true", help="skip the public betting board"
+    )
     p_refresh.set_defaults(func=cmd_refresh)
 
     p_recap = sub.add_parser("recap", help="last week's results and what to learn")

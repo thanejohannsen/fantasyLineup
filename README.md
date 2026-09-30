@@ -95,6 +95,7 @@ roster looks like a bug in the model, not a typo in the command.
 | Sleeper `/projections`, `/stats`, `/schedule` | projections, actuals, game status | none |
 | Kalshi `trade-api/v2` | player prop ladders | none |
 | ESPN public scoreboard | exact kickoff times, live game state | none |
+| Action Network web scoreboard | public ticket and money splits | none |
 
 Sleeper's projection and stats endpoints are undocumented. They return
 *component* stats (`rush_yd`, `rec`, `rec_td`), which is why they are used: this
@@ -144,6 +145,11 @@ the **Refresh advisory** workflow from the Actions tab.
 Trades and waivers are rest-of-season decisions and only recompute when the next
 kickoff is more than 24 hours away, so the slate itself does not get slowed down
 by a search whose answer will not have changed.
+
+The fade board is rebuilt from scratch on that same schedule -- comfortably more
+often than the hourly the rule asks for -- so a game that falls below the ticket
+threshold, or that has kicked off, is simply absent from the next run. Nothing
+is marked stale because nothing is kept.
 
 ## Learning from results
 
@@ -326,6 +332,40 @@ Worth knowing about this league specifically: across the whole 2025 season it
 recorded 227 transactions and **not one trade**. Every proposal this tool
 generates would be breaking new ground, which is also why the pitch text matters.
 
+## Fade the public
+
+A second tab lists NFL games where **80% or more of the bet tickets** sit on one
+side of a spread or total, and names the other side. Tickets, not handle: a
+headcount, where a five-dollar parlay leg weighs the same as a serious position.
+The gap between the two is the signal, so the money share is shown beside the
+ticket share and flagged when it disagrees -- 80% of tickets next to half the
+money means the minority is betting far larger.
+
+Moneylines are excluded. They reach 80% almost automatically, because everyone
+takes the big favourite for a small payout, so the threshold stops
+discriminating: over three weeks the rule fired on 35 moneylines at a 34% win
+rate against 8 spreads.
+
+The board is recomputed from scratch every refresh, so a game that stops
+qualifying -- or has kicked off -- simply stops appearing. There is no stale row
+to remove and nothing to go out of sync, the same way roster availability is
+derived everywhere else here.
+
+**It is a log, not a claim of edge.** Three weeks of backtest put the spread arm
+at 6-2, a confidence interval running from 45% to 105%, which is consistent with
+anything at all. It exists so a forward record can accumulate against a rule
+fixed in advance, which is the only way the question gets answered. Every
+snapshot is appended to `betting_splits` at fetch time, so that record grades
+against what was observable *before* kickoff rather than reconstructed after.
+
+One oddity worth knowing: this feed reports the **under** ahead on tickets in 52
+of 64 sampled games, which inverts the best-documented bias in betting. That
+looked like transposed labels, so it was checked -- two live totals pointing in
+opposite directions, each matching an independent public board exactly, money
+share included. The labels are right; why the crowd sits on unders is a real
+question and an open one. Both sides and their shares stay on the page so the
+next such check costs one glance.
+
 ## Known limitations
 
 - **Players are simulated independently.** A quarterback and his receiver rise
@@ -345,7 +385,7 @@ generates would be breaking new ground, which is also why the pitch text matters
 ## Development
 
 ```bash
-.venv/bin/python -m pytest        # 161 tests, no network required
+.venv/bin/python -m pytest        # 177 tests, no network required
 ```
 
 Tests run against captured real API responses in `fixtures/`, so they fail if an

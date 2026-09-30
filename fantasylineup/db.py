@@ -127,6 +127,27 @@ CREATE TABLE IF NOT EXISTS games (
 );
 CREATE INDEX IF NOT EXISTS idx_games_week ON games(season, week);
 
+-- What the betting public looked like at each refresh. The board on the page is
+-- recomputed live, so nothing reads this back yet; it exists because a forward
+-- record of a contrarian rule is only honest if it is graded against splits
+-- actually observed before kickoff rather than reconstructed afterwards.
+CREATE TABLE IF NOT EXISTS betting_splits (
+    fetched_at  TEXT NOT NULL,
+    kickoff_utc TEXT,
+    away        TEXT NOT NULL,
+    home        TEXT NOT NULL,
+    market      TEXT NOT NULL,   -- 'spread' | 'total' | 'moneyline'
+    side        TEXT NOT NULL,   -- home/away, or over/under
+    line        REAL,
+    odds        INTEGER,
+    tickets_pct INTEGER NOT NULL,
+    money_pct   INTEGER,
+    num_bets    INTEGER,
+    PRIMARY KEY (fetched_at, away, home, market, side)
+);
+CREATE INDEX IF NOT EXISTS idx_splits_game
+    ON betting_splits(away, home, kickoff_utc, fetched_at DESC);
+
 -- Projections, one row per (source, player, week, as_of). Component stats are
 -- kept as JSON so the league's own scoring settings can be reapplied later.
 CREATE TABLE IF NOT EXISTS projections (

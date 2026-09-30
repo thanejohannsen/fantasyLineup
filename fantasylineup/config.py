@@ -99,6 +99,14 @@ class HealthConfig:
 
 
 @dataclass(frozen=True)
+class FadesConfig:
+    """The contrarian board: which ticket share counts as \"the public\"."""
+
+    threshold: int = 80
+    markets: tuple[str, ...] = ("spread", "total")
+
+
+@dataclass(frozen=True)
 class Config:
     league: LeagueConfig
     paths: PathsConfig
@@ -106,6 +114,7 @@ class Config:
     model: ModelConfig
     trades: TradesConfig
     health: HealthConfig
+    fades: FadesConfig
     root: Path
 
 
@@ -133,5 +142,6 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         model=ModelConfig(**raw["model"]),
         trades=TradesConfig(**raw.get("trades", {})),
         health=HealthConfig(**raw.get("health", {})),
+        fades=FadesConfig(**raw.get("fades", {})),
         root=root,
     )
