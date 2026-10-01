@@ -38,10 +38,7 @@ from .report.advisory import build_advisory
 from .report.render_html import TeamView, render_dashboard, render_moves_panel
 from .report.recap import build_recap, sync_actuals
 from .report.render_text import render_advisory, render_moves, render_recap
-from .engine.fades import find_fades
-from .engine.record import load_log, save_log, settle, tally
 from .sources.kickoffs import sync_kickoffs
-from .sources.splits import fetch_splits, store_results, store_splits
 from .sources.sleeper import SleeperClient
 from .sync import (
     compute_availability,
@@ -435,36 +432,6 @@ def cmd_refresh(args: argparse.Namespace) -> int:
                 )
             return weekly[rid]
 
-        # The contrarian board. Recomputed from a live fetch every run, so a
-        # game that stops qualifying simply stops appearing; the snapshot is
-        # kept only so the rule can be graded later against what was actually
-        # visible before kickoff.
-        fades = []
-        settled = []
-        if not args.no_splits:
-            split_games = fetch_splits()
-            if split_games:
-                store_splits(conn, split_games, now)
-                store_results(conn, split_games, now)
-                fades = find_fades(
-                    split_games,
-                    threshold=cfg.fades.threshold,
-                    now=now,
-                    markets=tuple(cfg.fades.markets),
-                )
-            # The committed archive first: `data/` is gitignored and restored
-            # from a cache that gets evicted, so without this a scheduled run
-            # grades an empty history and the record silently vanishes -- which
-            # is exactly what it did.
-            load_log(conn, cfg.paths.fade_log)
-            # Graded off the stored snapshots rather than anything held in
-            # memory, so the record survives a run that fetched nothing.
-            settled = settle(
-                conn,
-                threshold=cfg.fades.threshold,
-                markets=tuple(cfg.fades.markets),
-            )
-            save_log(conn, cfg.paths.fade_log)
 
         # Season totals for every rostered player, keyed by id so a renderer
         # can look one up without re-deriving the blend.
@@ -530,9 +497,6 @@ def cmd_refresh(args: argparse.Namespace) -> int:
             league.get("name", "Fantasy"),
             views,
             default_roster_id=cfg.league.roster_id,
-            fades=fades,
-            fade_threshold=cfg.fades.threshold,
-            settled=settled,
         ),
         encoding="utf-8",
     )
@@ -542,46 +506,8 @@ def cmd_refresh(args: argparse.Namespace) -> int:
         f"Week {week} vs {mine.opponent_name if mine else 'unknown'}; "
         f"{len(views)} teams; moves refreshed: {want_moves}"
     )
-    print(f"Fade board: {len(fades)} qualifying at {cfg.fades.threshold}% of tickets")
-    print(f"Fade record: {tally(settled).label} over {len(settled)} settled bets")
     return 0
 
-
-def cmd_fades_backfill(args: argparse.Namespace) -> int:
-    """Seed the fade record from weeks that finished before it existed.
-
-    A completed week only serves its *closing* ticket counts, so these rows are
-    stamped with each game's kickoff and flagged ``is_final`` -- graded through
-    the ordinary path, but distinguishable from a genuine pre-kickoff reading,
-    which the page says out loud.
-    """
-    cfg = load_config(args.config)
-    weeks = [int(w) for w in args.weeks.split(",") if w.strip()]
-    season = args.season or cfg.league.season
-
-    with open_db(cfg.paths.db) as conn:
-        for week in weeks:
-            games = fetch_splits(week=week, season=season)
-            final = [g for g in games if g.final and g.kickoff_utc is not None]
-            if not final:
-                print(f"week {week}: nothing completed, skipped")
-                continue
-            for game in final:
-                store_splits(conn, [game], fetched_at=game.kickoff_utc, is_final=True)
-            store_results(conn, final)
-            print(f"week {week}: {len(final)} completed games")
-
-        load_log(conn, cfg.paths.fade_log)
-        settled = settle(
-            conn, threshold=cfg.fades.threshold, markets=tuple(cfg.fades.markets)
-        )
-        save_log(conn, cfg.paths.fade_log)
-
-    record = tally(settled)
-    print(f"Fade record: {record.label} over {len(settled)} settled bets")
-    for s in settled:
-        print(f"  {s.game:12} {s.fade.line_label:14} {s.score:>7}  {s.result}")
-    return 0
 
 
 def _league_moves_html(
@@ -808,21 +734,11 @@ def main(argv: list[str] | None = None) -> int:
     p_refresh.add_argument("-w", "--week", type=int, default=None)
     p_refresh.add_argument("--with-moves", action="store_true", help="force the trade search")
     p_refresh.add_argument("--no-kalshi", action="store_true")
-    p_refresh.add_argument(
-        "--no-splits", action="store_true", help="skip the public betting board"
-    )
     p_refresh.set_defaults(func=cmd_refresh)
 
     p_recap = sub.add_parser("recap", help="last week's results and what to learn")
     p_recap.add_argument("-w", "--week", type=int, default=None)
     p_recap.set_defaults(func=cmd_recap)
-
-    p_back = sub.add_parser(
-        "fades-backfill", help="seed the fade record from completed weeks"
-    )
-    p_back.add_argument("--weeks", default="1,2,3", help="comma-separated, e.g. 1,2,3")
-    p_back.add_argument("--season", type=int, default=None)
-    p_back.set_defaults(func=cmd_fades_backfill)
 
     p_cal = sub.add_parser("calibrate", help="refit the model on completed weeks")
     p_cal.add_argument("--backtest", action="store_true", help="replay the 2025 season")

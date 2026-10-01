@@ -127,54 +127,6 @@ CREATE TABLE IF NOT EXISTS games (
 );
 CREATE INDEX IF NOT EXISTS idx_games_week ON games(season, week);
 
--- What the betting public looked like at each refresh.
---
--- The one table here that is NOT rebuildable from the APIs. Everything else is
--- a cache; a *pre-kickoff* ticket count is not, because once a game is over the
--- feed serves only its closing tally -- which is why backfilled rows carry
--- is_final. `data/` is gitignored and the scheduled job restores it from an
--- Actions cache that gets evicted, so the rows that decided a settled bet are
--- mirrored into `records/fade_log.json`, which is committed. That copy is the
--- one that lasts; see engine/record.py.
---
--- The fade record is graded straight off this table: for each finished game the last snapshot at
--- or before kickoff decides whether the bet was on, which is what makes the
--- record honest -- it can only ever use what was observable before the game,
--- and a game that fell below the threshold during the week simply is not in
--- its own gameday snapshot.
-CREATE TABLE IF NOT EXISTS betting_splits (
-    fetched_at  TEXT NOT NULL,
-    kickoff_utc TEXT,
-    away        TEXT NOT NULL,
-    home        TEXT NOT NULL,
-    market      TEXT NOT NULL,   -- 'spread' | 'total' | 'moneyline'
-    side        TEXT NOT NULL,   -- home/away, or over/under
-    line        REAL,
-    odds        INTEGER,
-    tickets_pct INTEGER NOT NULL,
-    money_pct   INTEGER,
-    num_bets    INTEGER,
-    -- 1 for rows backfilled from a completed week, whose percentages are the
-    -- final tally rather than a pre-kickoff reading. Graded the same way, but
-    -- the page says how many of the record came in on that basis.
-    is_final    INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (fetched_at, away, home, market, side)
-);
-CREATE INDEX IF NOT EXISTS idx_splits_game
-    ON betting_splits(away, home, kickoff_utc, fetched_at DESC);
-
--- Final scores, so a bet taken from the splits above can be graded. Written
--- whenever the splits payload shows a game complete; the same feed carries the
--- boxscore, so this needs no second source.
-CREATE TABLE IF NOT EXISTS game_results (
-    away         TEXT NOT NULL,
-    home         TEXT NOT NULL,
-    kickoff_utc  TEXT NOT NULL,
-    away_points  INTEGER NOT NULL,
-    home_points  INTEGER NOT NULL,
-    recorded_at  TEXT NOT NULL,
-    PRIMARY KEY (away, home, kickoff_utc)
-);
 
 -- Projections, one row per (source, player, week, as_of). Component stats are
 -- kept as JSON so the league's own scoring settings can be reapplied later.
@@ -268,7 +220,6 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
 # rather than building one, so these have to be applied explicitly.
 _ADDED_COLUMNS: dict[str, dict[str, str]] = {
     "games": {"period": "INTEGER", "clock": "REAL"},
-    "betting_splits": {"is_final": "INTEGER NOT NULL DEFAULT 0"},
 }
 
 

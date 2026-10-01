@@ -11,10 +11,6 @@ db = "data/fantasylineup.db"
 cache = "data/cache"
 reports = "reports"
 site = "docs"
-# Tracked, unlike the database. `data/` is gitignored and the scheduled job
-# restores it from a cache that gets evicted; a pre-kickoff ticket count cannot
-# be refetched once the game is over, so the settled fade history lives here.
-fade_log = "records/fade_log.json"
 
 [sources]
 sleeper_base = "https://api.sleeper.app"
@@ -90,13 +86,3 @@ weekly_questionable = 0.80
 [health.returns]
 # "Josh Jacobs" = 7   # six-game suspension, back week 7
 
-[fades]
-# Share of *tickets* -- a headcount, not money -- that makes a side "the
-# public" and puts the other side on the board. Moneylines are deliberately not
-# listed: they reach any threshold almost automatically, because everyone takes
-# the big favourite for a small payout.
-#
-# The board is a log, not advice. Three weeks of backtest put the spread arm at
-# 6-2, an interval consistent with anything at all.
-threshold = 80
-markets = ["spread", "total"]

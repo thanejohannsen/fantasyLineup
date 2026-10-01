@@ -95,7 +95,6 @@ roster looks like a bug in the model, not a typo in the command.
 | Sleeper `/projections`, `/stats`, `/schedule` | projections, actuals, game status | none |
 | Kalshi `trade-api/v2` | player prop ladders | none |
 | ESPN public scoreboard | exact kickoff times, live game state | none |
-| Action Network web scoreboard | public ticket and money splits | none |
 
 Sleeper's projection and stats endpoints are undocumented. They return
 *component* stats (`rush_yd`, `rec`, `rec_td`), which is why they are used: this
@@ -145,11 +144,6 @@ the **Refresh advisory** workflow from the Actions tab.
 Trades and waivers are rest-of-season decisions and only recompute when the next
 kickoff is more than 24 hours away, so the slate itself does not get slowed down
 by a search whose answer will not have changed.
-
-The fade board is rebuilt from scratch on that same schedule -- comfortably more
-often than the hourly the rule asks for -- so a game that falls below the ticket
-threshold, or that has kicked off, is simply absent from the next run. Nothing
-is marked stale because nothing is kept.
 
 ## Learning from results
 
@@ -332,93 +326,15 @@ Worth knowing about this league specifically: across the whole 2025 season it
 recorded 227 transactions and **not one trade**. Every proposal this tool
 generates would be breaking new ground, which is also why the pitch text matters.
 
-## Fade the public
+## The betting board moved out
 
-A second tab lists NFL games where **80% or more of the bet tickets** sit on one
-side of a spread or total, and names the other side. Tickets, not handle: a
-headcount, where a five-dollar parlay leg weighs the same as a serious position.
-The gap between the two is the signal, so the money share is shown beside the
-ticket share and flagged when it disagrees -- 80% of tickets next to half the
-money means the minority is betting far larger.
+The contrarian "fade the public" board used to live here as a second tab. It
+now has its own repository and site at
+[fadePublic](https://github.com/thanejohannsen/fadePublic).
 
-Moneylines are excluded. They reach 80% almost automatically, because everyone
-takes the big favourite for a small payout, so the threshold stops
-discriminating: over three weeks the rule fired on 35 moneylines at a 34% win
-rate against 8 spreads.
-
-The board is recomputed from scratch every refresh, so a game that stops
-qualifying -- or has kicked off -- simply stops appearing. There is no stale row
-to remove and nothing to go out of sync, the same way roster availability is
-derived everywhere else here.
-
-### The record
-
-A tally sits above the board: **16-4** at the time of writing, over 2026 weeks
-1-3. It is **derived, never accumulated**. Every refresh appends what it saw to
-`betting_splits` with a timestamp, so for any finished game the question "was
-this bet on?" has one answer that can be recomputed from scratch -- and is, on
-every run. Nothing is locked, the board and the record cannot disagree about
-what qualified (both call the same `find_fades`), and raising the threshold
-re-grades every past week for free.
-
-The deciding reading is **the last snapshot at or before kickoff**. That is what
-makes "it fell off the board during the week" enforce itself with no
-bookkeeping: a game carrying 85% of tickets on Tuesday that has drifted to 70%
-by Sunday is not lopsided in its own gameday snapshot, so it never enters the
-record. A reading taken after kickoff is never used -- by then the tickets
-include people betting the live game.
-
-The scheduled refresh is not reliable, so the nearest reading can be stale. Past
-four hours from kickoff it is not evidence about gameday at all, and the bet is
-dropped rather than graded on a guess. A smaller honest record beats a larger
-invented one.
-
-Weeks 1-3 were backfilled with `fl fades-backfill`, and those rows are graded
-from each game's **closing** ticket count -- a finished week is all the feed
-still serves. Live rows use a genuine pre-kickoff reading. The page says which
-is which once the record holds both.
-
-#### Why the record is committed, and the database is not
-
-`data/` is gitignored and the scheduled job restores it from a GitHub Actions
-cache, on the standing principle that the database is a cache and everything in
-it can be refetched. `betting_splits` broke that principle: a **pre-kickoff**
-ticket count cannot be refetched, because once the game is over the feed serves
-only the closing tally. An evicted cache would have silently downgraded the
-season's record to closing tallies with nothing on the page to show it.
-
-So the reading that decided each settled bet is mirrored to
-**`records/fade_log.json`**, which is tracked. `fl refresh` loads it before
-grading and writes it back afterwards, and the workflow commits it. A fresh
-clone with no database reproduces the record exactly.
-
-It stores **snapshots, not verdicts**. Which reading decides depends only on
-time, never on the threshold, so freezing it keeps history re-gradeable: change
-the threshold and every past week re-grades from the archive alone. A game is
-archived as soon as its kickoff passes rather than when the score lands, so a
-cache eviction can cost at most one refresh interval of real pre-kickoff
-readings. Measured at six rows per game: about 30KB so far, ~170KB for a full
-season.
-
-This is the mistake that produced the first version of this feature. The
-backfill ran locally, `data/` never reached GitHub, and what shipped was a
-rendered page with 16-4 baked into the HTML. The next scheduled run regenerated
-that page from a database that had never seen the backfill and correctly
-published an empty record.
-
-**It is a log, not a claim of edge.** Sixteen and four is twenty bets; the 95%
-interval on it runs roughly 54% to 88% against a 52.4% break-even, so the lower
-bound clears the hurdle only barely. Worse, the rule was found on the very weeks
-it is scored against, which is the ordinary way a number like this appears and
-then evaporates. The forward record is the only thing that will settle it.
-
-One oddity worth knowing: this feed reports the **under** ahead on tickets in 52
-of 64 sampled games, which inverts the best-documented bias in betting. That
-looked like transposed labels, so it was checked -- two live totals pointing in
-opposite directions, each matching an independent public board exactly, money
-share included. The labels are right; why the crowd sits on unders is a real
-question and an open one. Both sides and their shares stay on the page so the
-next such check costs one glance.
+It shared no data with this tool -- it reached only Action Network, never
+Sleeper, Kalshi or the league -- and it does not belong behind a page that
+also shows a roster, a league and a set of planned trade offers.
 
 ## Known limitations
 
@@ -439,7 +355,7 @@ next such check costs one glance.
 ## Development
 
 ```bash
-.venv/bin/python -m pytest        # 195 tests, no network required
+.venv/bin/python -m pytest        # 161 tests, no network required
 ```
 
 Tests run against captured real API responses in `fixtures/`, so they fail if an
